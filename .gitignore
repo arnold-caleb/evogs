@@ -43,6 +43,7 @@ saga_data/
 
 # Code directories to exclude
 scene/operators/
+arguments/operator/
 
 # Experimental/unused features
 scene/adaptive_coherence.py
