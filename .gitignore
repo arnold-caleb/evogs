@@ -1,0 +1,66 @@
+*.pyc
+.vscode
+output
+build
+diff_rasterization/diff_rast.egg-info
+diff_rasterization/dist
+tensorboard_3d
+screenshots
+
+# Documentation and test files
+docs/
+INTRINSIC_DYNAMICS_TRAINING_SEQUENCE.md
+CORAL_TWO_STAGE_EXPLAINED.md
+INTRINSIC_DYNAMICS_CONCEPTUAL_CORE.md
+CORRECT_APPROACH_SINGLE_GRID_DYNAMICS.md
+CLARIFICATION_INITIAL_CONDITION.md
+GITHUB_RELEASE_CONTENTS.md
+CLEANUP_COMPLETE.md
+test_*.py
+
+# Large data files and outputs
+data/
+datasets/
+rendered_videos_hq/
+rendered_videos_full_4d/
+slurm_outputs/
+slurm_scripts/
+cleaned_video_output/
+point_cloud/
+visualizations/
+tmp*/
+*.mp4
+*.avi
+*.mkv
+*.zip
+*.log
+colmap_output.log
+
+# External dependencies and generated data
+co-tracker/
+saga/
+saga_data/
+
+# Code directories to exclude
+scene/operators/
+
+# Experimental/unused features
+scene/adaptive_coherence.py
+scene/grid_evolution.py
+
+# User-specific configuration (keep .example template)
+scripts/config_paths.sh
+weight_visualization.ipynb
+train_with_dynamics.py 
+train_with_frame0.py 
+render_static_frame0.py
+merge_many_4dgs.py 
+INTERACTIVE_RUN.sh
+LICENSE.md
+SIBR_viewers/
+misc.py
+setup_environment.sh
+colmap.sh
+colmap.dynerf.sh
+colmap_dynerf.sh
+.gitmodules 

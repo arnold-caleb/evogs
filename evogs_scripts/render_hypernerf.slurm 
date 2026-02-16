@@ -1,0 +1,40 @@
+#!/bin/bash
+#SBATCH --job-name=render_hypernerf_vrig-chicken
+#SBATCH --output=slurm_outputs/render_hypernerf_%j.out
+#SBATCH --error=slurm_outputs/render_hypernerf_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=32G
+#SBATCH --time=01:00:00
+#SBATCH --account=visualai
+#SBATCH --partition=visualai
+#SBATCH --gres=gpu:1
+
+echo "=== RENDERING AMERICANO TEMPORAL VIDEO ==="
+hostname
+nvidia-smi
+
+echo ""
+echo "=== ACTIVATING ENVIRONMENT ==="
+source /u/aa0008/miniconda/etc/profile.d/conda.sh
+conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
+cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+
+MODEL_DIR="output/hypernerf/americano_20251112_120341_0.75"
+
+echo ""
+echo "Model: $MODEL_DIR"
+echo "Rendering 150 temporal frames from camera 8"
+
+python scripts/render_hypernerf_temporal.py \
+    --model_path "$MODEL_DIR" \
+    --source_path "data/nerfies/americano" \
+    --configs "arguments/hypernerf/tamping.py" \
+    --iteration 14000 \
+    --num_frames 150 \
+    --camera_index 8
+
+echo ""
+echo "=== COMPLETE ==="
+echo "Output: $MODEL_DIR/videos/temporal_evolution_150frames.mp4"

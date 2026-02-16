@@ -1,0 +1,25 @@
+#!/bin/bash
+# Configuration file for EvoGS training paths
+# Copy this file to config_paths.sh and edit with your paths:
+#   cp scripts/config_paths.sh.example scripts/config_paths.sh
+
+# === DATASET CONFIGURATION ===
+# Root directory containing your datasets
+export DATA_ROOT="/path/to/your/datasets"
+
+# Specific dataset paths (override DATA_ROOT if needed)
+export DNERF_DATA="${DATA_ROOT}/dnerf"
+export DYNERF_DATA="${DATA_ROOT}/dynerf"
+export HYPERNERF_DATA="${DATA_ROOT}/hypernerf"
+
+# === OUTPUT CONFIGURATION ===
+# Directory where training outputs will be saved
+export OUTPUT_ROOT="./output"
+
+# === CONDA ENVIRONMENT ===
+# Path to your conda environment (leave empty to skip)
+export CONDA_ENV_PATH=""
+
+# === GPU CONFIGURATION ===
+export NUM_GPUS=1
+

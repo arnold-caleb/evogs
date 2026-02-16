@@ -1,0 +1,53 @@
+#!/bin/bash
+#SBATCH --job-name=train_dnerf_all
+#SBATCH --output=slurm_outputs/dnerf_all_%j.out
+#SBATCH --error=slurm_outputs/dnerf_all_%j.err
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
+#SBATCH --account=visualai
+#SBATCH --partition=visualai
+#SBATCH --gres=gpu:l40:1
+
+echo "=== TRAINING D-NERF SCENES ==="
+hostname
+nvidia-smi
+
+echo ""
+echo "=== ACTIVATING ENVIRONMENT ==="
+source /u/aa0008/miniconda/etc/profile.d/conda.sh
+conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
+
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+
+SCENES=("jumpingjacks")
+
+echo ""
+echo "Training ${#SCENES[@]} scene(s)"
+echo ""
+
+for scene in "${SCENES[@]}"; do
+    echo "=== Training: $scene ==="
+    
+    TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+    OUTPUT_DIR="output/dnerf/${scene}_${TIMESTAMP}"
+    
+    python train.py \
+        --source_path "data/dnerf/${scene}" \
+        --model_path "$OUTPUT_DIR" \
+        --configs "arguments/dnerf/${scene}.py" \
+        --expname "dnerf_${scene}" \
+        --eval \
+        --iterations 20000 \
+        --test_iterations 10000 20000 \
+        --save_iterations 10000 20000 \
+        --checkpoint_iterations 10000 20000
+    
+    echo "Output: $OUTPUT_DIR"
+    echo ""
+done
+
+echo "=== COMPLETE ==="
