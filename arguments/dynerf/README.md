@@ -12,6 +12,7 @@ dynerf/
 ├── base_velocity.py          # Base config for velocity field (EvoGS) models
 ├── base_displacement.py      # Base config for displacement field (4DGaussians) models
 ├── base_sparse.py            # Base config for sparse supervision experiments
+├── base_future.py            # Base config for future reconstruction experiments
 │
 ├── {scene}.py                # Scene-specific configs (inherit from base*.py)
 ├── {scene}_velocity.py       # Scene with velocity field
@@ -46,6 +47,14 @@ Sparse temporal supervision:
 - Position-only motion
 - Spatial coherence loss
 - No densification (maintain correspondence)
+
+### `base_future.py`
+Future reconstruction (temporal extrapolation):
+- Train on first 50% of frames, predict rest
+- Multi-anchor constraints to reduce drift
+- Position-only motion for stability
+- Strong coherence regularization
+- Conservative integration settings
 
 ## Scene Configs
 
@@ -109,6 +118,14 @@ python train.py \
 ./scripts/train_with_sparse_supervision.sh cut_roasted_beef arguments/dynerf/cut_roasted_beef_sparse_stride3.py
 ```
 
+### Future Reconstruction
+```bash
+python train.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/dynerf_future/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_future_velocity.py
+```
+
 ## Creating New Configs
 
 To create a new scene or variant:
@@ -118,6 +135,7 @@ To create a new scene or variant:
    - `base_velocity.py` - Velocity field (EvoGS)
    - `base_displacement.py` - Displacement field
    - `base_sparse.py` - Sparse supervision
+   - `base_future.py` - Future reconstruction (temporal extrapolation)
 
 2. Create a new config file:
 ```python
@@ -141,5 +159,7 @@ OptimizationParams = dict(
 - **Use `xyz_only` variants** if you see artifacts in scale/rotation
 - **Try RK4 integration** if you have sufficient GPU memory (much better accuracy)
 - **Sparse supervision** tests generalization (harder, but proves the model learns dynamics)
-- **Multi-anchor** reduces integration drift for long sequences
+- **Future reconstruction** tests extrapolation ability (train on first 50%, predict rest)
+- **Multi-anchor** reduces integration drift for long sequences and future prediction
+- For new scenes, create a config inheriting from the appropriate base and only override what's needed
 

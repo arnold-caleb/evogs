@@ -63,4 +63,8 @@ setup_environment.sh
 colmap.sh
 colmap.dynerf.sh
 colmap_dynerf.sh
-.gitmodules 
+.gitmodules
+code.py
+original_4dgs.py
+submodules/
+train_static_frame0.py

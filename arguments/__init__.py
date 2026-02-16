@@ -130,8 +130,8 @@ class ModelHiddenParams(ParamGroup):
         self.use_multi_anchor = False  # Enable multi-anchor constraints
         self.anchor_checkpoints = {}  # Dict of {normalized_time: checkpoint_path}
         self.lambda_anchor = 1.0  # Weight for anchor loss
+        self.anchor_loss_interval = 10  # Compute anchor loss every N iterations (0 = disabled)
         self.use_anchor_constraints = False  # Use anchors to constrain trajectory without multi-anchor integration
-        self.use_anchor_constraints = False  # Use anchors only as trajectory constraints
         
         # ODE Integration Method: 'euler' for L40 44GB, 'rk4' for A100 40GB+
         self.ode_method_train = 'euler'  # 'euler' or 'rk4'

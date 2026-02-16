@@ -18,6 +18,10 @@ ModelHiddenParams = dict(
     time_smoothness_weight = 0.00001,
     static_mlp = False,
     velocity_activation_iter = 0,
+    # train_time_max = 0.5,
+    sparse_supervision = True,
+    supervised_frame_stride = 3,  # Train on every 3rd frame
+    supervised_frame_offset = 1,  # Start at frame 1
     
     # ODE Integration
     use_adjoint = False,  # Standard odeint (adjoint mode can be unstable)
@@ -41,17 +45,19 @@ OptimizationParams = dict(
     # Velocity coherence prevents "spiky" artifacts
     lambda_velocity_coherence = 0.01,
     
-    # DENSIFICATION
-    densify_until_iter = 6000,
-    densify_from_iter = 500,
+    # DENSIFICATION: Disabled when using --start_checkpoint with pre-optimized Gaussians.
+    # The velocity field handles dynamics; adding/removing points breaks correspondence
+    # with anchor Gaussians and introduces noise into an already-converged representation.
+    densify_until_iter = 0,         # DISABLED: don't add new Gaussians
+    densify_from_iter = 99999999,
     densification_interval = 200,
     densify_grad_threshold_fine_init = 0.0004,
     densify_grad_threshold_after = 0.0004,
     opacity_threshold_fine_init = 0.005,
     opacity_threshold_fine_after = 0.005,
-    pruning_from_iter = 500,
+    pruning_from_iter = 99999999,   # DISABLED: don't prune Gaussians
     pruning_interval = 200,
-    opacity_reset_interval = 5000,
+    opacity_reset_interval = 99999999,  # DISABLED: fatal with opacity_lr=0!
     add_point = False,
     
     velocity_reg_weight = 0.0,

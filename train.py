@@ -1,8 +1,6 @@
 """
-EvoGS: Velocity Field Training for Dynamic 3D Gaussian Splatting
-
-This script implements training for both displacement fields (4DGaussians baseline)
-and velocity fields (EvoGS - our method using Neural ODEs).
+EvoGS: 4D Gaussian Splatting as a Learned Dynamical System
+Code is adapted from the original 4D Gaussian Splatting codebase: https://github.com/hustvl/4DGaussians/blob/master/train.py
 
 Key features:
 - Multi-stage training: coarse (optional warm start) → fine (dynamics learning)
@@ -18,11 +16,8 @@ Training flow:
 4. Run fine stage with velocity field and full dynamics
 5. Adaptive densification based on temporal gradients
 6. Periodic evaluation and checkpointing
-
-For usage examples, see scripts/train_velocity_field.sh
 """
 
-# ================================ IMPORTS ================================
 import copy
 import os
 import random
@@ -65,32 +60,10 @@ except ImportError:
     TENSORBOARD_FOUND = False
 
 
-# ================================ MAIN TRAINING LOOP ================================
-
 def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from,
                          gaussians, scene, stage, tb_writer, train_iter, timer, anchor_gaussians=None):
-    """
-    Main training loop for a single stage (coarse or fine).
-    
-    Args:
-        stage: "coarse" (geometry warm-start) or "fine" (velocity field training)
-        anchor_gaussians: Dict[float, GaussianModel] - fixed waypoint Gaussians at key timesteps
-        train_iter: Number of iterations to run this stage
-    
-    Training flow:
-        1. Setup: Initialize progress bar, data loaders, sparse sampler (if enabled)
-        2. Per-iteration:
-            a. Render batch of views at sampled timestep
-            b. Compute photometric loss (with sparse supervision if enabled)
-            c. Apply regularization losses (TV, coherence, anchor constraints)
-            d. Backward pass and optimizer step
-            e. Densification/pruning based on temporal gradients
-            f. Periodic evaluation and checkpointing
-    """
-    # ============================================================================
-    # INITIALIZATION: Setup training state and data loaders
-    # ============================================================================
     first_iter = 0
+
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
@@ -110,27 +83,32 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     num_time_steps = getattr(scene, 'num_time_steps', 0)
     if num_time_steps is None or num_time_steps == 0:
         num_time_steps = len(frame_times) if frame_times else 300
+    
+    # Compute unique temporal frames (frame_times may have duplicates across cameras)
+    # e.g., 19 cameras × 300 frames = 5700 entries, but only 300 unique timestamps
+    unique_frame_times = sorted(set(frame_times)) if frame_times else []
+    num_unique_frames = len(unique_frame_times) if unique_frame_times else num_time_steps
 
     def frame_index_from_time(time_value: float) -> int:
         """
-        Map a timestamp to the nearest discrete frame index.
-        Supports both normalized times (0-1) and DyNeRF-style absolute indices.
+        Map a timestamp to the nearest unique temporal frame index (0 to num_unique_frames-1).
+        Uses deduplicated timestamps so the result is a temporal index, not a dataset index.
         """
-        if frame_times:
-            insert_idx = bisect_left(frame_times, time_value)
-            if insert_idx >= len(frame_times):
-                return len(frame_times) - 1
-            if frame_times[insert_idx] == time_value or insert_idx == 0:
+        if unique_frame_times:
+            insert_idx = bisect_left(unique_frame_times, time_value)
+            if insert_idx >= len(unique_frame_times):
+                return len(unique_frame_times) - 1
+            if unique_frame_times[insert_idx] == time_value or insert_idx == 0:
                 return insert_idx
             prev_idx = insert_idx - 1
-            prev_time = frame_times[prev_idx]
-            next_time = frame_times[insert_idx]
+            prev_time = unique_frame_times[prev_idx]
+            next_time = unique_frame_times[insert_idx]
             return insert_idx if abs(next_time - time_value) < abs(time_value - prev_time) else prev_idx
 
-        if num_time_steps <= 1:
+        if num_unique_frames <= 1:
             return 0
 
-        max_frame = num_time_steps - 1
+        max_frame = num_unique_frames - 1
 
         # DyNeRF datasets often store time directly as an integer frame index.
         if time_value >= -1e-6 and time_value <= max_frame + 1 and time_value > 1.5:
@@ -149,6 +127,8 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     # (Rendering will still use all frames via test_cams/video_cams)
     # ============================================================================
     train_time_max = getattr(hyper, 'train_time_max', 1.0)
+
+    # this takes longer to load. 
     if train_time_max < 1.0:
         print(f"\n[FILTERING] Training only on frames with time <= {train_time_max} (first {int(train_time_max*100)}%)")
         filtered_train_cams = []
@@ -164,10 +144,12 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         # dnerf's branch
         viewpoint_stack = [i for i in train_cams]
         temp_list = copy.deepcopy(viewpoint_stack)
+
     batch_size = opt.batch_size
     print("data loading done")
 
     using_sparse_temporal_sampler = False
+
     if opt.dataloader:
         viewpoint_stack = train_cams  # Use filtered training cameras
         if opt.custom_sampler is not None:
@@ -188,6 +170,14 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
                 else:
                     print("[SPARSE WARNING] Could not infer camera/frame counts for sampler; falling back to dense sampling.") 
             if sampler is not None:
+                print(f"[SPARSE] Using sparse temporal sampler with stride={stride} and offset={offset}")
+                # One-time dump: show ALL supervised temporal frame indices for verification
+                supervised_temporal = sorted(set(
+                    idx % sampler.num_frames for idx in sampler.valid_indices
+                ))
+                skipped_temporal = sorted(set(range(sampler.num_frames)) - set(supervised_temporal))
+                print(f"[SPARSE] Supervised temporal frames ({len(supervised_temporal)}/{sampler.num_frames}): {supervised_temporal}")
+                print(f"[SPARSE] Skipped temporal frames   ({len(skipped_temporal)}/{sampler.num_frames}): {skipped_temporal}")
                 viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size, sampler=sampler, num_workers=16, collate_fn=list)
                 random_loader = False
             else:
@@ -244,6 +234,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
                 idx +=1
             if len(viewpoint_cams) == 0:
                 continue
+            
         # ============================================================================
         # STEP 2: Render batch of views and accumulate outputs
         # ============================================================================
@@ -285,33 +276,18 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         gt_image_tensor = torch.cat(gt_images,0)
         
         # ============================================================================
-        # STEP 3: Compute loss with supervision filtering
+        # FUTURE RECONSTRUCTION: No supervision beyond train_time_max
         # ============================================================================
-        
-        # ============================================================================
-        # FUTURE RECONSTRUCTION: No supervision on future, but compute PSNR!
-        # ============================================================================
-        supervised = True  # Default: supervise all frames
-        
-        # Get time value first (for logging even if not using future reconstruction)
+        supervised = True
         time_value = viewpoint_cams[0].time if len(viewpoint_cams) > 0 else 0.0
         
         if hasattr(hyper, 'future_reconstruction') and hyper.future_reconstruction and stage in ("fine", "coarse"):
             train_time_max = getattr(hyper, 'train_time_max', 1.0)
-            
-            # Print EVERY 10 iterations to see time distribution
-            if iteration % 10 == 0:
-                frame_idx = frame_index_from_time(time_value)
-                print(f"[FRAME] Iter {iteration}: t={time_value:.4f}, frame={frame_idx}, future={time_value > train_time_max}")
-            
             if time_value > train_time_max:
-                # Future frame: No loss, but RENDER to see PSNR degradation!
                 supervised = False
-                if iteration % 10 == 0:
-                    print(f"  ⚠️  FUTURE FRAME - no training signal!")
         
-        # # ============================================================================
-        # # SPARSE SUPERVISION: Only compute photometric loss for supervised frames
+        # ============================================================================
+        # SPARSE SUPERVISION: Only compute photometric loss for supervised frames
         # ============================================================================
         per_camera_frames = []
         per_camera_supervised = []
@@ -320,8 +296,6 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             stride = getattr(hyper, 'supervised_frame_stride', 1)
             offset = getattr(hyper, 'supervised_frame_offset', 0)
             if stride <= 0:
-                if iteration == 1:
-                    print("[SPARSE] stride <= 0 detected; disabling sparse supervision (using stride=1).")
                 stride = 1
                 offset = 0
             anchor_times = getattr(hyper, 'anchor_checkpoints', {}).keys()
@@ -329,20 +303,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             for cam in viewpoint_cams:
                 time_value_cam = getattr(cam, 'time', 0.0)
                 frame_idx_cam = frame_index_from_time(time_value_cam)
-
                 is_anchor = any(abs(time_value_cam - anchor_t) < 0.01 for anchor_t in anchor_times)
                 is_supervised_frame = (frame_idx_cam % stride) == offset
-
                 per_camera_frames.append(frame_idx_cam)
                 per_camera_supervised.append(is_anchor or is_supervised_frame)
 
             if supervised:
                 supervised = any(per_camera_supervised)
-
-            if iteration % 100 == 0 and per_camera_frames:
-                supervised_frames = [str(frame) for frame, flag in zip(per_camera_frames, per_camera_supervised) if flag]
-                skipped_frames = [str(frame) for frame, flag in zip(per_camera_frames, per_camera_supervised) if not flag]
-                print(f"[SPARSE] Iter {iteration} stage={stage} supervised_frames={supervised_frames} skipped_frames={skipped_frames}")
         else:
             for cam in viewpoint_cams:
                 time_value_cam = getattr(cam, 'time', 0.0)
@@ -357,16 +324,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         if supervised and has_supervised:
             supervised_images = image_tensor[supervision_mask]
             supervised_gt_images = gt_image_tensor[supervision_mask]
-
             Ll1 = l1_loss(supervised_images, supervised_gt_images[:,:3,:,:])
-            # Keep PSNR logging on full batch to monitor held-out quality as before
             psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()
             loss = Ll1
         else:
-            # Unsupervised frame: No photometric loss, but COMPUTE PSNR for logging!
             with torch.no_grad():
-                Ll1 = l1_loss(image_tensor, gt_image_tensor[:,:3,:,:])  # Compute for logging
-                psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()  # Track quality
+                Ll1 = l1_loss(image_tensor, gt_image_tensor[:,:3,:,:])
+                psnr_ = psnr(image_tensor, gt_image_tensor).mean().double()
             loss = torch.tensor(0.0, device=image_tensor.device, requires_grad=True)
 
         if stage == "fine" and hyper.time_smoothness_weight != 0:
@@ -374,160 +338,59 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             loss = loss + tv_loss
 
         # ============================================================================
-        # STEP 4: Regularization losses (optional, mostly commented out for now)
+        # ANCHOR LOSS: Compare evolved Gaussians at anchor times with frozen anchors
         # ============================================================================
-        
-        # if opt.lambda_dssim != 0:
-        #     ssim_loss = ssim(image_tensor,gt_image_tensor)
-        #     loss += opt.lambda_dssim * (1.0 - ssim_loss)
-        
-        # # ============================================================================
-        # # MULTI-ANCHOR LOSS: Constrain integrated positions to match anchor Gaussians
-        # # ============================================================================
-        # if anchor_gaussians is not None and len(anchor_gaussians) > 0 and stage == "fine":
-        #     # Get current timestep (normalized to 0-1)
-        #     time_value = viewpoint_cams[0].time if len(viewpoint_cams) > 0 else 0.0
-            
-        #     # Check if current time matches an anchor
-        #     lambda_anchor = getattr(hyper, 'lambda_anchor', 1.0)
-        #     anchor_tolerance = 0.01  # Consider times within 1% as anchor times
-            
-        #     for anchor_time, anchor_gauss in anchor_gaussians.items():
-        #         if abs(time_value - anchor_time) < anchor_tolerance:
-        #             # We're at an anchor timestep!
-        #             # Get integrated positions from velocity field
-                    
-        #             if (hasattr(gaussians, '_deformation') and 
-        #                 hasattr(gaussians._deformation, 'velocity_field') and
-        #                 hasattr(gaussians._deformation.velocity_field, 'last_integrated_xyz')):
-        #                 # Use cached integrated positions from render
-        #                 integrated_xyz = gaussians._deformation.velocity_field.last_integrated_xyz.detach()
-        #             elif hasattr(gaussians, '_deformation'):
-        #                 # Displacement field: Manually integrate to get current positions
-        #                 # For now, use canonical (displacement field doesn't cache positions)
-        #                 integrated_xyz = gaussians._xyz
-        #                 print(f"[ANCHOR WARNING] Displacement field detected, using canonical positions")
-        #             else:
-        #                 # No deformation: use canonical
-        #                 integrated_xyz = gaussians._xyz
-                    
-        #             anchor_xyz = anchor_gauss._xyz.to(integrated_xyz.device)
-                    
-        #             # Ensure same number of Gaussians
-        #             n_gaussians = min(integrated_xyz.shape[0], anchor_xyz.shape[0])
-                    
-        #             # Anchor loss: L2 distance between integrated and anchor positions
-        #             anchor_loss = ((integrated_xyz[:n_gaussians] - anchor_xyz[:n_gaussians]) ** 2).mean()
-                    
-        #             loss += lambda_anchor * anchor_loss
-                    
-        #             avg_distance = (integrated_xyz[:n_gaussians] - anchor_xyz[:n_gaussians]).norm(dim=-1).mean().item()
-        #             print(f"[ANCHOR LOSS] t={time_value:.3f} (anchor={anchor_time}), "
-        #                   f"loss={anchor_loss.item():.6f}, weighted={lambda_anchor * anchor_loss.item():.6f}, "
-        #                   f"avg_dist={avg_distance:.6f}")
-                    
-        #             break  # Only one anchor per timestep
-        
-        # # ============================================================================
-        # # VELOCITY COHERENCE: Force nearby Gaussians to move together!
-        # # ============================================================================
-        # if stage == "fine" and hasattr(hyper, 'use_velocity_field') and hyper.use_velocity_field:
-        #     # Get coherence weight from config (default: 0.0 = disabled)
-        #     lambda_coherence = getattr(opt, 'lambda_coherence', 0.0)
-            
-        #     if lambda_coherence > 0 and supervised:  # Only apply on supervised frames
-        #         time_value = viewpoint_cams[0].time if len(viewpoint_cams) > 0 else 0.0
-                
-        #         # Get velocity field from gaussians
-        #         velocity_field = gaussians._deformation if hasattr(gaussians, '_deformation') else None
-                
-        #         if velocity_field is not None:
-        #             # Check if using adaptive or fixed coherence
-        #             use_adaptive = getattr(opt, 'use_adaptive_coherence', False)
-                    
-        #             if use_adaptive:
-        #                 # ========================================================
-        #                 # ADAPTIVE COHERENCE: Learned spatially-varying weights
-        #                 # ========================================================
-        #                 if not hasattr(gaussians, 'coherence_predictor'):
-        #                     # Initialize predictor on first use
-        #                     gaussians.coherence_predictor = AdaptiveCoherencePredictor(
-        #                         input_dim=13,
-        #                         hidden_dim=32
-        #                     ).cuda()
-                            
-        #                     # Add predictor parameters to MAIN optimizer (joint optimization)
-        #                     # This allows end-to-end gradient flow from photometric loss
-        #                     # through coherence constraint to predictor weights
-        #                     predictor_param_group = {
-        #                         'params': gaussians.coherence_predictor.parameters(),
-        #                         'lr': 1e-4,
-        #                         'name': 'coherence_predictor'
-        #                     }
-        #                     opt.optimizer.add_param_group(predictor_param_group)
-        #                     print("[ADAPTIVE COHERENCE] Initialized predictor network (joint optimization)")
-                        
-        #                 # Get integrated positions cache from render (if available)
-        #                 integrated_cache = None
-        #                 if hasattr(velocity_field, 'last_integrated_xyz'):
-        #                     integrated_cache = velocity_field.last_integrated_xyz
-                        
-        #                 # Compute adaptive coherence loss
-        #                 coherence_loss, coh_stats = compute_adaptive_coherence_loss(
-        #                     gaussians=gaussians,
-        #                     velocity_field=velocity_field,
-        #                     coherence_predictor=gaussians.coherence_predictor,
-        #                     t=time_value,
-        #                     n_samples=1000,
-        #                     n_neighbors=8,
-        #                     base_lambda=lambda_coherence,
-        #                     integrated_positions_cache=integrated_cache
-        #                 )
-                        
-        #                 # Add to main loss (joint optimization via single backward pass)
-        #                 # Gradients will flow: photometric → coherence → predictor weights
-        #                 loss = loss + coherence_loss
-                        
-        #                 # Logging
-        #                 if iteration % 100 == 0:
-        #                     w_stats = coh_stats['coherence_weights']
-        #                     print(f"[ADAPTIVE COHERENCE] t={time_value:.3f}, "
-        #                           f"loss={coh_stats['coherence_loss']:.6f}, "
-        #                           f"weights: mean={w_stats['mean']:.3f}, "
-        #                           f"std={w_stats['std']:.3f}, "
-        #                           f"min={w_stats['min']:.3f}, "
-        #                           f"max={w_stats['max']:.3f}")
-                    
-        #             else:
-        #                 # ========================================================
-        #                 # FIXED COHERENCE: Constant weight (original approach)
-        #                 # ========================================================
-        #                 total_reg_loss, reg_losses_dict = compute_velocity_regularizations(
-        #                     gaussians=gaussians,
-        #                     velocity_field=velocity_field,
-        #                     t=time_value,
-        #                     n_samples=1000,
-        #                     n_neighbors=8,
-        #                     lambda_div=0.0,
-        #                     lambda_coh=lambda_coherence,
-        #                     lambda_strain=0.0,
-        #                     lambda_opac=0.0,
-        #                     use_adaptive_lambda=False,
-        #                     enable_strain=False
-        #                 )
-                        
-        #                 coherence_loss = reg_losses_dict.get("trajectory_coherence", 0.0)
-                        
-        #                 loss = loss + coherence_loss
-                        
-        #                 # Logging
-        #                 if iteration % 100 == 0 and coherence_loss != 0:
-        #                     print(f"[FIXED COHERENCE] t={time_value:.3f}, loss={coherence_loss:.6f}")
-        
+        # The velocity field integrates trainable Gaussians from t=0 to t_target.
+        # Anchor loss ensures that when integrated to an anchor time (e.g., t=0.25),
+        # the evolved 3D positions match the pre-optimized static Gaussians at that time.
+        # This provides direct 3D supervision along the trajectory, complementing
+        # the indirect photometric loss from rendering.
+        anchor_loss_value = torch.tensor(0.0, device=loss.device)
+        lambda_anchor = getattr(hyper, 'lambda_anchor', 0.0)
+        anchor_loss_interval = getattr(hyper, 'anchor_loss_interval', 10)
+
+        if (stage == "fine" and anchor_gaussians is not None and len(anchor_gaussians) > 0
+                and lambda_anchor > 0 and anchor_loss_interval > 0
+                and iteration % anchor_loss_interval == 0):
+
+            anchor_times_list = sorted(anchor_gaussians.keys())
+            # Cycle through anchors so each gets equal attention
+            anchor_idx = (iteration // anchor_loss_interval) % len(anchor_times_list)
+            anchor_t = anchor_times_list[anchor_idx]
+            anchor_gauss = anchor_gaussians[anchor_t]
+
+            N_train = gaussians._xyz.shape[0]
+            N_anchor = anchor_gauss._xyz.shape[0]
+
+            if N_train == N_anchor:
+                # Integrate trainable Gaussians from t=0 to anchor time
+                t_anchor_tensor = torch.ones(N_train, 1, device=gaussians._xyz.device) * anchor_t
+
+                evolved_xyz, _, _, _, _ = gaussians._deformation(
+                    gaussians._xyz, gaussians._scaling, gaussians._rotation,
+                    gaussians._opacity, gaussians.get_features, t_anchor_tensor
+                )
+
+                # L2 loss between evolved positions and frozen anchor positions
+                anchor_pos_loss = torch.mean((evolved_xyz - anchor_gauss._xyz) ** 2)
+                anchor_loss_value = lambda_anchor * anchor_pos_loss
+                loss = loss + anchor_loss_value
+            else:
+                # N mismatch: skip anchor loss (happens when --start_checkpoint not used)
+                if iteration % 1000 == 0:
+                    print(f"[ANCHOR] Skipping anchor loss: N_train={N_train} != N_anchor={N_anchor}")
+                    print(f"  Hint: Use --start_checkpoint to initialize from same static checkpoint as anchors")
+
+        # Log loss and frame info periodically
+        if iteration % 100 == 0:
+            frame_idx = frame_index_from_time(time_value)
+            sup_tag = "supervised" if supervised else "unsupervised"
+            anchor_str = f"  anchor={anchor_loss_value.item():.6f}" if anchor_loss_value.item() > 0 else ""
+            print(f"[Iter {iteration}] loss={loss.item():.6f}  L1={Ll1.item():.6f}  PSNR={psnr_:.2f}  frame={frame_idx}  ({sup_tag}){anchor_str}")
+
         # ============================================================================
         # STEP 5: Backward pass and gradient accumulation
         # ============================================================================
-        
         # Update current_iteration for velocity field training
         if (stage == "fine" and hasattr(gaussians, '_deformation') and 
             hasattr(gaussians._deformation, 'velocity_field')):
@@ -536,8 +399,12 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         loss.backward()
 
         if torch.isnan(loss).any():
-            print("loss is nan, end training, reexecv program now.")
-            os.execv(sys.executable, [sys.executable] + sys.argv)
+            print(f"[ERROR] Loss is NaN at iteration {iteration}. Stopping training.")
+            print(f"  Last frame={frame_index_from_time(time_value)}, t={time_value:.4f}")
+            print(f"  Saving emergency checkpoint before exit...")
+            torch.save((gaussians.capture(), iteration), 
+                       scene.model_path + f"/chkpnt_nan_{stage}_{iteration}.pth")
+            sys.exit(1)
 
         viewspace_point_tensor_grad = torch.zeros_like(viewspace_point_tensor)
 
@@ -638,8 +505,6 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" +f"_{stage}_" + str(iteration) + ".pth")
 
 
-# ================================ TRAINING ORCHESTRATION ================================
-
 def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, checkpoint, debug_from, expname, load_iteration=None):
     """
     Main training orchestrator: Sets up scene, loads checkpoints, and runs training stages.
@@ -704,21 +569,27 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
             if os.path.exists(checkpoint_path):
                 print(f"Loading anchor at t={anchor_time}: {checkpoint_path}")
                 
-                # Create new GaussianModel for this anchor
-                anchor_gauss = GaussianModel(dataset.sh_degree, hyper)
-                anchor_gauss.training_setup(opt)  # Need optimizer for restore
+                # Extract Gaussian parameters directly from checkpoint tuple.
+                # Anchors only need frozen positions/attributes — no deformation
+                # or velocity network required. This avoids state_dict mismatch
+                # warnings when anchor checkpoints use a different network type.
+                (model_params_tuple, _) = torch.load(checkpoint_path, map_location="cpu")
                 
-                # Load checkpoint
-                (anchor_params, _) = torch.load(checkpoint_path, map_location="cpu")
-                anchor_gauss.restore(anchor_params, opt)
+                class AnchorGaussians:
+                    """Lightweight container for frozen anchor Gaussians."""
+                    pass
                 
-                # Detach anchor tensors (keep on original device) so they stay read-only
-                anchor_gauss._xyz = anchor_gauss._xyz.detach()
-                anchor_gauss._features_dc = anchor_gauss._features_dc.detach()
-                anchor_gauss._features_rest = anchor_gauss._features_rest.detach()
-                anchor_gauss._opacity = anchor_gauss._opacity.detach()
-                anchor_gauss._scaling = anchor_gauss._scaling.detach()
-                anchor_gauss._rotation = anchor_gauss._rotation.detach()
+                anchor_gauss = AnchorGaussians()
+                # Checkpoint tuple layout: (active_sh_degree, _xyz, deform_state,
+                #   _deformation_table, _features_dc, _features_rest, _scaling,
+                #   _rotation, _opacity, max_radii2D, xyz_gradient_accum, denom,
+                #   opt_dict, spatial_lr_scale, [clone_birth_iter])
+                anchor_gauss._xyz = model_params_tuple[1].detach().cuda()
+                anchor_gauss._features_dc = model_params_tuple[4].detach().cuda()
+                anchor_gauss._features_rest = model_params_tuple[5].detach().cuda()
+                anchor_gauss._scaling = model_params_tuple[6].detach().cuda()
+                anchor_gauss._rotation = model_params_tuple[7].detach().cuda()
+                anchor_gauss._opacity = model_params_tuple[8].detach().cuda()
                 anchor_gauss.idx_map = None
                 
                 anchor_gaussians[anchor_time] = anchor_gauss
@@ -727,6 +598,14 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
                 print(f"  ✗ Warning: Anchor checkpoint not found: {checkpoint_path}")
         
         print(f"Total anchors loaded: {len(anchor_gaussians)}")
+        _lambda_anchor = getattr(hyper, 'lambda_anchor', 0.0)
+        _anchor_interval = getattr(hyper, 'anchor_loss_interval', 10)
+        if _lambda_anchor > 0 and _anchor_interval > 0:
+            print(f"Anchor loss ENABLED: lambda={_lambda_anchor}, interval={_anchor_interval}")
+            print(f"  Every {_anchor_interval} iters, integrates to a random anchor time")
+            print(f"  and penalizes L2 distance to frozen anchor positions")
+        else:
+            print(f"Anchor loss DISABLED (lambda={_lambda_anchor}, interval={_anchor_interval})")
         print("")
 
     if use_multi_anchor:
@@ -734,7 +613,7 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
     else:
         gaussians.anchor_gaussians = None
 
-        # Optional: derive dynamic mask from anchor displacement to limit velocity field scope
+    # Optional: derive dynamic mask from anchor displacement to limit velocity field scope
     
     # Start from fine stage that will be trained with velocity field
     # Pass checkpoint=None to skip loading again in scene_reconstruction
@@ -756,9 +635,6 @@ def training(dataset, hyper, opt, pipe, testing_iterations, saving_iterations, c
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         evaluate_seen_unseen_metrics(scene, render, [pipe, background], "fine", scene.dataset_type, train_time_max, hyper)
 
-
-# ================================ UTILITY FUNCTIONS ================================
-
 def prepare_output_and_logger(expname):    
     """Setup output directory and tensorboard logger"""
     if not args.model_path:
@@ -776,9 +652,6 @@ def prepare_output_and_logger(expname):
     else:
         print("Tensorboard not available: not logging progress")
     return tb_writer
-
-
-# ================================ EVALUATION FUNCTIONS ================================
 
 def evaluate_seen_unseen_metrics(scene, renderFunc, renderArgs, stage, dataset_type, train_time_max, hyper):
     """
@@ -1001,9 +874,6 @@ def setup_seed(seed):
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
-
-
-# ================================ MAIN ENTRY POINT ================================
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()

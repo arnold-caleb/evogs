@@ -135,19 +135,27 @@ class velocity_network(nn.Module):
         """
         Dynamic scene with ODE integration.
         
-        Process:
-        1. Apply positional encoding to inputs
-        2. Build initial state dictionary
-        3. Integrate velocity field via ODE
-        4. Return integrated state
+        Always integrates the TRAINABLE Gaussians (point, scales, etc.) to preserve
+        the Gaussian count N required by the rasterizer backward pass.
+        
+        When anchor_gaussians are provided, the integration start time is shifted
+        to the nearest anchor time <= t_target, reducing integration distance.
+        The trainable Gaussians must be initialized from a checkpoint at t=0
+        (via --start_checkpoint) for this to be meaningful.
+        
+        Anchor Gaussians themselves are NOT substituted into the render pipeline
+        (they may have different N). They are used separately for anchor loss.
         
         Args:
-            t_start (float): Starting time for integration
-            anchor_gaussians (dict): Anchor Gaussians (optional)
-            freeze_mask (Tensor): Freeze mask (optional)
+            point (Tensor): [N, 3] trainable canonical positions
+            scales, rotations, opacity, shs: trainable Gaussian properties
+            times_sel (Tensor): [N, 1] target times
+            t_start (float): Starting time for integration (default 0.0)
+            anchor_gaussians (dict): {time: GaussianModel} for anchor loss (not used here)
+            freeze_mask (Tensor): Optional mask for freezing regions
         
         Returns:
-            tuple: Integrated (xyz, scales, rotations, opacity, shs)
+            tuple: Integrated (xyz, scales, rotations, opacity, shs) at t_target
         """
         N = point.shape[0]
         device = point.device
@@ -159,27 +167,20 @@ class velocity_network(nn.Module):
             velocity_activation = getattr(self.velocity_field, 'velocity_activation_iter', 0)
             
             if current_iter < velocity_activation:
-                # Return canonical state unchanged
                 return (point, scales, rotations, opacity, shs)
         
-        # Apply positional encoding
-        point_emb = poc_fre(point, self.pos_poc)
-        scales_emb = poc_fre(scales, self.rotation_scaling_poc) if scales is not None else None
-        rotations_emb = poc_fre(rotations, self.rotation_scaling_poc) if rotations is not None else None
-        
-        # Build initial state
+        # Build initial state from trainable Gaussians (preserves N for rasterizer)
         initial_state = {
             'xyz': point,
             'scale': scales,
             'rotation': rotations,
         }
         
-        # Add color/opacity if velocity field integrates them
         if self.velocity_field.integrate_color_opacity:
             initial_state['opacity'] = opacity
             initial_state['shs'] = shs
         
-        # Integrate velocity field
+        # Integrate velocity field from t_start to t_target
         final_state = self.integrator.integrate(initial_state, t_start, t_target)
         
         # Extract results
@@ -187,7 +188,6 @@ class velocity_network(nn.Module):
         scales_out = final_state.get('scale', scales)
         rotations_out = final_state.get('rotation', rotations)
         
-        # Handle color/opacity
         if self.velocity_field.integrate_color_opacity:
             opacity_out = final_state.get('opacity', opacity)
             shs_out = final_state.get('shs', shs)
