@@ -1,7 +1,7 @@
 ## `EvoGS`: 4D Gaussian Splatting as a Learned Dynamical System
 
 <p >
-  <strong><a href="https://cs.princeton.edu/~aa0008">Arnold Caleb Asiimwe</a></strong><sup>1</sup>,&nbsp; <strong><a href="https:/cs.columbia.edu/~vondrick">Carl Vondrick</a></strong><sup>2</sup>
+  <strong><a href="https://cs.princeton.edu/~aa0008">Arnold Caleb Asiimwe</a></strong><sup>1</sup>,&nbsp; <strong><a href="https://cs.columbia.edu/~vondrick">Carl Vondrick</a></strong><sup>2</sup>
   <br>
   <sup>1</sup>Princeton University, &nbsp; <sup>2</sup>Columbia University
   <br>
@@ -99,20 +99,17 @@ cd data/dnerf
 # Download from: https://github.com/albertpumarola/D-NeRF
 # Extract lego scene to data/dnerf/lego/
 
-# 2. Train with velocity field (`EvoGS`)
-./scripts/train_velocity_field.sh lego arguments/dnerf/lego_velocity.py
+# 2. Train with velocity field (EvoGS)
+python train.py \
+  --source_path data/dnerf/lego \
+  --model_path output/evogs_lego \
+  --configs arguments/dnerf/lego_velocity.py \
+  --iterations 7000
 
 # 3. Render results
-python render.py \
-  --model_path output/dnerf_velocity/lego_YYYYMMDD_HHMMSS \
+python scripts/render_dnerf_temporal.py \
+  --model_path output/evogs_lego \
   --configs arguments/dnerf/lego_velocity.py
-```
-
-### Train with Sparse Supervision
-
-```bash
-# Train on every 3rd frame, interpolate the rest
-./scripts/train_with_sparse_supervision.sh lego arguments/dnerf/lego_velocity.py
 ```
 
 ---
@@ -163,16 +160,34 @@ python train.py \
 
 #### 1. Standard Velocity Field (`EvoGS`)
 ```bash
-./scripts/train_velocity_field.sh lego arguments/dnerf/lego_velocity.py
+python train.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/velocity/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_velocity.py \
+  --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
 ```
 
 #### 2. Sparse Temporal Supervision
-Train on every 3rd frame to test generalization:
+Train on every 3rd frame and let the velocity field interpolate the rest:
 ```bash
-./scripts/train_with_sparse_supervision.sh lego arguments/dnerf/lego_velocity.py
+python train.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/velocity_sparse/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_sparse_stride3.py \
+  --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
 ```
 
-#### 3. Displacement Field (4DGaussians Baseline)
+#### 3. Future Reconstruction (Temporal Extrapolation)
+Train on the first 50% of frames and predict the remaining 50%:
+```bash
+python train.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/velocity_future/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_future_velocity.py \
+  --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
+```
+
+#### 4. Displacement Field (4DGaussians Baseline)
 ```bash
 python train.py \
   --source_path data/dynerf/cut_roasted_beef \
@@ -180,39 +195,146 @@ python train.py \
   --configs arguments/dynerf/cut_roasted_beef_displacement.py
 ```
 
-### Training from Static Checkpoint
+### Gaussian Waypoints (Anchor Training)
 
-For better initialization, train a static frame first:
+When training with sparse temporal supervision or future reconstruction, the velocity field must integrate over long time spans. This can lead to **integration drift** — small errors that accumulate and cause the evolved Gaussians to diverge from the true scene. **Gaussian waypoints** (anchors) stabilize this by providing pre-optimized 3D Gaussian checkpoints at specific timesteps that the velocity field is encouraged to pass through during integration.
+
+Think of waypoints as **ground-truth targets at key frames**: if you know what the scene should look like at `t = 0.0, 0.25, 0.50, 0.75`, the velocity field can be penalized when its integrated trajectory drifts away from those checkpoints. This is the **anchor loss**.
+
+#### Step 1: Train the Canonical Gaussians (Frame 0)
+
+First, train a static 3D Gaussian model on the first frame. This becomes your initial condition *and* the canonical Gaussian set — every subsequent anchor will start from these same Gaussians to ensure **Gaussian correspondence** (Gaussian #i always refers to the same physical point across all anchors).
+
 ```bash
-# 1. Train static frame 0
-python train.py \
+python train_anchor.py \
   --source_path data/dynerf/cut_roasted_beef \
-  --model_path output/static/cut_roasted_beef \
-  --configs arguments/static/cut_roasted_beef_frame0.py
+  --model_path output/static_4anchors/frame0 \
+  --configs arguments/static/cut_roasted_beef_frame0_hq.py \
+  --dataset_type dynerf_static \
+  --frame_idx 0 \
+  --iterations 30000 \
+  --checkpoint_iterations 30000
+```
 
-# 2. Train velocity field from checkpoint
+#### Step 2: Train Additional Anchor Frames
+
+For each additional anchor (e.g., frames 75, 150, 225), load the canonical checkpoint from Step 1 and optimize positions to fit that frame. This preserves the Gaussian count and correspondence:
+
+```bash
+# Frame 75 (t = 0.25)
+python train_anchor.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/static_4anchors/frame75 \
+  --configs arguments/static/cut_roasted_beef_anchor.py \
+  --dataset_type dynerf_static \
+  --frame_idx 75 \
+  --canonical_checkpoint output/static_4anchors/frame0/chkpnt30000.pth \
+  --iterations 30000 \
+  --checkpoint_iterations 30000
+
+# Frame 150 (t = 0.50)
+python train_anchor.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/static_4anchors/frame150 \
+  --configs arguments/static/cut_roasted_beef_anchor.py \
+  --dataset_type dynerf_static \
+  --frame_idx 150 \
+  --canonical_checkpoint output/static_4anchors/frame0/chkpnt30000.pth \
+  --iterations 30000 \
+  --checkpoint_iterations 30000
+
+# Frame 225 (t = 0.75)
+python train_anchor.py \
+  --source_path data/dynerf/cut_roasted_beef \
+  --model_path output/static_4anchors/frame225 \
+  --configs arguments/static/cut_roasted_beef_anchor.py \
+  --dataset_type dynerf_static \
+  --frame_idx 225 \
+  --canonical_checkpoint output/static_4anchors/frame0/chkpnt30000.pth \
+  --iterations 30000 \
+  --checkpoint_iterations 30000
+```
+
+> **SLURM users**: See `evogs_scripts/train_anchors.slurm` which automates all 4 anchor trainings sequentially.
+
+#### Step 3: Train the Velocity Field with Waypoints
+
+Point your scene config at the anchor checkpoints (see `arguments/dynerf/cut_roasted_beef_velocity.py` for an example):
+
+```python
+# arguments/dynerf/my_scene_velocity.py
+_base_ = './base_velocity.py'
+
+ModelHiddenParams = dict(
+    use_multi_anchor = True,
+    anchor_checkpoints = {
+        0.00: "output/static_4anchors/frame0/chkpnt30000.pth",
+        0.25: "output/static_4anchors/frame75/chkpnt30000.pth",
+        0.50: "output/static_4anchors/frame150/chkpnt30000.pth",
+        0.75: "output/static_4anchors/frame225/chkpnt30000.pth",
+    },
+)
+```
+
+Then train, initializing from the frame 0 anchor:
+
+```bash
 python train.py \
   --source_path data/dynerf/cut_roasted_beef \
   --model_path output/velocity/cut_roasted_beef \
   --configs arguments/dynerf/cut_roasted_beef_velocity.py \
-  --start_checkpoint output/static/cut_roasted_beef/chkpnt30000.pth
+  --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
 ```
+
+> **SLURM users**: See `evogs_scripts/train_dynerf_all.slurm`.
+
+#### How the Anchor Loss Works
+
+During training, the velocity field integrates the trainable Gaussians from `t = 0` to each anchor time. The **anchor loss** penalizes the L2 distance between the evolved Gaussian positions and the pre-optimized anchor positions:
+
+```
+L_anchor = λ_anchor · mean(|| x_evolved(t_anchor) - x_anchor ||²)
+```
+
+This gives the velocity field direct 3D supervision at the anchor timesteps, preventing drift without requiring per-frame deformation fitting. The key parameters are:
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `lambda_anchor` | Weight of the anchor loss | `0.0` (off) / `1.0` (future) |
+| `anchor_loss_interval` | Compute anchor loss every N iterations | `10` |
+
+> **Important**: `--start_checkpoint` must point to the same frame 0 checkpoint used as the canonical source for anchors. This ensures the trainable Gaussians have the same count (`N`) as the anchors, which is required for the 1-to-1 position comparison.
 
 ---
 
 ## 📊 Evaluation
 
 ### Render Test Views
+
+Each dataset has a dedicated rendering script in `scripts/`:
+
 ```bash
-python render.py \
-  --model_path output/evogs_lego/lego_YYYYMMDD_HHMMSS \
-  --configs arguments/dnerf/lego_velocity.py \
-  --skip_train  # Only render test views
+# D-NeRF scenes
+python scripts/render_dnerf_temporal.py \
+  --model_path output/evogs_lego \
+  --configs arguments/dnerf/lego_velocity.py
+
+# DyNeRF scenes (velocity field)
+python scripts/render_velocity_field_temporal.py \
+  --model_path output/velocity/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_velocity.py
+
+# HyperNeRF scenes
+python scripts/render_hypernerf_temporal.py \
+  --model_path output/hypernerf/interp_cut_lemon \
+  --configs arguments/hypernerf/interp_cut_lemon_velocity.py
 ```
+
+> **SLURM users**: See `evogs_scripts/render_dnerf_all.slurm`, `evogs_scripts/render_velocity_field.slurm`, and `evogs_scripts/render_hypernerf.slurm`.
 
 ### Compute Metrics
 ```bash
-./scripts/evaluate_model.sh output/evogs_lego/lego_YYYYMMDD_HHMMSS
+./scripts/evaluate_model.sh output/velocity/cut_roasted_beef
 ```
 
 Metrics computed:
@@ -242,6 +364,7 @@ arguments/
 │   ├── base_velocity.py    # Velocity field defaults
 │   ├── base_displacement.py # Displacement field defaults
 │   ├── base_sparse.py      # Sparse supervision defaults
+│   ├── base_future.py      # Future reconstruction defaults
 │   └── README.md           # Full documentation
 │
 └── hypernerf/               # HyperNeRF dataset
@@ -273,7 +396,7 @@ See `arguments/dnerf/README.md` for complete documentation.
 ### Core Implementation
 
 ```
-scene/velocity/              # `EvoGS` velocity field (our contribution!)
+scene/velocity/              # EvoGS velocity field (our contribution!)
 ├── __init__.py             # Public API
 ├── field.py                # VelocityField neural network architecture
 ├── integration.py          # ODEIntegrator with RK4/Euler methods
@@ -288,8 +411,10 @@ scene/                       # Gaussian Splatting scene
 ├── dataset_readers.py      # Data loaders for all datasets
 └── sparse_temporal_sampler.py  # Sparse supervision sampler
 
-train.py                     # Main training script
-render.py                    # Rendering script
+train.py                     # Main training script (velocity field / displacement)
+train_anchor.py              # Train static Gaussian waypoints for anchor loss
+scripts/                     # Dataset-specific rendering & evaluation scripts
+evogs_scripts/               # SLURM job scripts for cluster training
 gaussian_renderer/           # Differentiable rasterization
 utils/                       # General utilities
 ```
@@ -347,24 +472,16 @@ We use `torchdiffeq` for numerical integration:
 
 We provide configs for all ablations in the paper:
 
-```bash
-# Sparse supervision (every 3rd frame)
-arguments/dynerf/cut_roasted_beef_sparse_stride3.py
+| Experiment | Config | Description |
+|------------|--------|-------------|
+| Sparse supervision (stride 3) | `arguments/dynerf/cut_roasted_beef_sparse_stride3.py` | Train on every 3rd frame |
+| Future reconstruction | `arguments/dynerf/cut_roasted_beef_future_velocity.py` | Train on first 50%, predict rest |
+| Multi-anchor | `arguments/dynerf/cut_roasted_beef_multi_anchor.py` | Reduce integration drift with waypoints |
+| RK4 integration | `arguments/dynerf/cut_roasted_beef_velocity_rk4_a100.py` | 4th-order Runge-Kutta |
+| XYZ-only | `arguments/dynerf/cut_roasted_beef_velocity_xyz_only.py` | Position velocity only (no rotation/scale) |
+| Displacement baseline | `arguments/dynerf/cut_roasted_beef_sparse_displacement.py` | 4DGS deformation baseline |
 
-# Future reconstruction (train on first 50%, test on last 50%)
-arguments/dynerf/cut_roasted_beef_future_velocity.py
-
-# Multi-anchor (reduce integration drift)
-arguments/dynerf/cut_roasted_beef_multi_anchor.py
-
-# RK4 integration
-arguments/dynerf/cut_roasted_beef_velocity_rk4_a100.py
-
-# XYZ-only (no rotation/scale evolution)
-arguments/dynerf/cut_roasted_beef_velocity_xyz_only.py
-```
-
-See configuration READMEs for full list.
+See configuration READMEs (`arguments/dynerf/README.md`) for the full list.
 
 ---
 
@@ -412,7 +529,7 @@ This project is licensed under the Gaussian Splatting License. See [LICENSE.md](
 ## 🔗 Links
 
 - **Project Page:** https://arnold-caleb.github.io/evogs
-- **Paper (arXiv):** Coming soon
+- **Paper (arXiv):** https://arxiv.org/pdf/2512.19648 
 - **D-NeRF Dataset:** https://github.com/albertpumarola/D-NeRF
 - **DyNeRF Dataset:** https://github.com/USTC3DV/DyNeRF-Dataset
 - **HyperNeRF Dataset:** https://github.com/google/hypernerf
