@@ -490,11 +490,14 @@ See configuration READMEs (`arguments/dynerf/README.md`) for the full list.
 If you find this work useful, please cite:
 
 ```bibtex
-@article{asiimwe2025evogs,
-  title={EvoGS: 4D Gaussian Splatting as a Learned Dynamical System},
-  author={Asiimwe, Arnold Caleb and Vondrick, Carl},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2025}
+@misc{asiimwe20254dgaussiansplattinglearned,
+      title={4D Gaussian Splatting as a Learned Dynamical System}, 
+      author={Arnold Caleb Asiimwe and Carl Vondrick},
+      year={2025},
+      eprint={2512.19648},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2512.19648}, 
 }
 ```
 
@@ -518,13 +521,13 @@ This project is licensed under the Gaussian Splatting License. See [LICENSE.md](
 
 ---
 
-## 🐛 Issues and Questions
+<!-- ## 🐛 Issues and Questions
 
 - **Issues:** Please open a GitHub issue
 - **Questions:** Check the configuration READMEs first, then open an issue
 - **Contributions:** Pull requests welcome!
 
----
+--- -->
 
 ## 🔗 Links
 
@@ -537,7 +540,5 @@ This project is licensed under the Gaussian Splatting License. See [LICENSE.md](
 ---
 
 <p align="center">
-  Made with ❤️ at Princeton University
-  <br>
   <em>"Everything flows" — Heraclitus</em>
 </p>

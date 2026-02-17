@@ -123,22 +123,43 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     train_cams = scene.getTrainCameras()
 
     # ============================================================================
-    # FILTER TRAINING CAMERAS: Only use first 75% of frames for training
-    # (Rendering will still use all frames via test_cams/video_cams)
+    # FILTER TRAINING CAMERAS FOR FUTURE PREDICTION
+    # When train_time_max < 1.0, only train on the first N% of frames.
+    # Future frames (time > train_time_max) are held out for evaluation.
     # ============================================================================
     train_time_max = getattr(hyper, 'train_time_max', 1.0)
+    is_future_prediction = getattr(hyper, 'future_reconstruction', False) and train_time_max < 1.0
 
-    # this takes longer to load. 
-    if train_time_max < 1.0:
-        print(f"\n[FILTERING] Training only on frames with time <= {train_time_max} (first {int(train_time_max*100)}%)")
+    if is_future_prediction:
+        total_before = len(train_cams)
+        all_train_times = sorted(set(getattr(cam, 'time', 0.0) for cam in train_cams))
+        all_train_frame_indices = [frame_index_from_time(t) for t in all_train_times]
+
         filtered_train_cams = []
         for cam in train_cams:
             time_value = getattr(cam, 'time', 0.0)
-            if time_value <= train_time_max:
+            if time_value <= train_time_max + 1e-9:
                 filtered_train_cams.append(cam)
         train_cams = filtered_train_cams
-        print(f"  Filtered from {len(scene.getTrainCameras())} to {len(train_cams)} training cameras")
-        print(f"  (Test/video cameras remain unfiltered for full-sequence rendering)")
+
+        kept_times = sorted(set(getattr(cam, 'time', 0.0) for cam in train_cams))
+        kept_frame_indices = sorted(set(frame_index_from_time(t) for t in kept_times))
+        excluded_frame_indices = sorted(set(all_train_frame_indices) - set(kept_frame_indices))
+
+        print(f"\n{'='*80}")
+        print(f"[FUTURE PREDICTION] train_time_max = {train_time_max}")
+        print(f"{'='*80}")
+        print(f"  Total cameras before filter : {total_before}")
+        print(f"  Cameras after filter         : {len(train_cams)}")
+        print(f"  Unique temporal frames (all) : {len(all_train_frame_indices)}")
+        print(f"  Kept frames ({len(kept_frame_indices)})  : {kept_frame_indices}")
+        print(f"  Excluded frames ({len(excluded_frame_indices)}): {excluded_frame_indices}")
+        if kept_times:
+            print(f"  Time range kept: [{min(kept_times):.4f}, {max(kept_times):.4f}]")
+        if len(excluded_frame_indices) == 0:
+            print(f"  [WARNING] No frames excluded! Check train_time_max={train_time_max} vs data time range.")
+        print(f"  Test/video cameras remain unfiltered for full-sequence rendering")
+        print(f"{'='*80}\n")
 
     if not viewpoint_stack and not opt.dataloader:
         # dnerf's branch
@@ -281,10 +302,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
         supervised = True
         time_value = viewpoint_cams[0].time if len(viewpoint_cams) > 0 else 0.0
         
-        if hasattr(hyper, 'future_reconstruction') and hyper.future_reconstruction and stage in ("fine", "coarse"):
-            train_time_max = getattr(hyper, 'train_time_max', 1.0)
-            if time_value > train_time_max:
+        if is_future_prediction and stage in ("fine", "coarse"):
+            if time_value > train_time_max + 1e-9:
+                # This should NOT happen if camera filtering works correctly.
+                # If it does, something is wrong with the filtering logic.
                 supervised = False
+                if iteration % 500 == 0:
+                    print(f"[FUTURE WARNING] Iter {iteration}: frame t={time_value:.4f} > train_time_max={train_time_max} leaked through! (unsupervised)")
         
         # ============================================================================
         # SPARSE SUPERVISION: Only compute photometric loss for supervised frames
@@ -386,7 +410,8 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
             frame_idx = frame_index_from_time(time_value)
             sup_tag = "supervised" if supervised else "unsupervised"
             anchor_str = f"  anchor={anchor_loss_value.item():.6f}" if anchor_loss_value.item() > 0 else ""
-            print(f"[Iter {iteration}] loss={loss.item():.6f}  L1={Ll1.item():.6f}  PSNR={psnr_:.2f}  frame={frame_idx}  ({sup_tag}){anchor_str}")
+            future_str = f"  [FUTURE t<={train_time_max}]" if is_future_prediction else ""
+            print(f"[Iter {iteration}] loss={loss.item():.6f}  L1={Ll1.item():.6f}  PSNR={psnr_:.2f}  frame={frame_idx} t={time_value:.4f}  ({sup_tag}){anchor_str}{future_str}")
 
         # ============================================================================
         # STEP 5: Backward pass and gradient accumulation
