@@ -40,7 +40,7 @@ ModelHiddenParams = dict(
 OptimizationParams = dict(
     batch_size = 2,  # DyNeRF scenes typically use smaller batch
     iterations = 7000,
-    coarse_iterations = 1,
+    coarse_iterations = 0,  # Skip coarse stage (loading from static checkpoint)
     
     # Velocity coherence prevents "spiky" artifacts
     lambda_velocity_coherence = 0.01,

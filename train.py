@@ -126,44 +126,56 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     # FILTER TRAINING CAMERAS FOR FUTURE PREDICTION
     # When train_time_max < 1.0, only train on the first N% of frames.
     # Future frames (time > train_time_max) are held out for evaluation.
+    #
+    # NOTE: We do NOT iterate through cameras here (that triggers slow image I/O).
+    # Instead, we read times from the underlying dataset's image_times array and
+    # build a valid-index list for a SubsetRandomSampler in the DataLoader.
     # ============================================================================
     train_time_max = getattr(hyper, 'train_time_max', 1.0)
     is_future_prediction = getattr(hyper, 'future_reconstruction', False) and train_time_max < 1.0
+    future_valid_indices = None  # Will hold filtered indices if future prediction is active
 
     if is_future_prediction:
         total_before = len(train_cams)
-        all_train_times = sorted(set(getattr(cam, 'time', 0.0) for cam in train_cams))
-        all_train_frame_indices = [frame_index_from_time(t) for t in all_train_times]
+        # Access times from underlying dataset WITHOUT loading images
+        base_ds = getattr(train_cams, 'dataset', None)
+        raw_times = getattr(base_ds, 'image_times', None)
 
-        filtered_train_cams = []
-        for cam in train_cams:
-            time_value = getattr(cam, 'time', 0.0)
-            if time_value <= train_time_max + 1e-9:
-                filtered_train_cams.append(cam)
-        train_cams = filtered_train_cams
+        if raw_times is not None and len(raw_times) == total_before:
+            all_unique_times = sorted(set(raw_times))
+            all_frame_indices = [frame_index_from_time(t) for t in all_unique_times]
 
-        kept_times = sorted(set(getattr(cam, 'time', 0.0) for cam in train_cams))
-        kept_frame_indices = sorted(set(frame_index_from_time(t) for t in kept_times))
-        excluded_frame_indices = sorted(set(all_train_frame_indices) - set(kept_frame_indices))
+            future_valid_indices = [i for i, t in enumerate(raw_times) if t <= train_time_max + 1e-9]
+            kept_times = sorted(set(raw_times[i] for i in future_valid_indices))
+            kept_frame_indices = sorted(set(frame_index_from_time(t) for t in kept_times))
+            excluded_frame_indices = sorted(set(all_frame_indices) - set(kept_frame_indices))
 
-        print(f"\n{'='*80}")
-        print(f"[FUTURE PREDICTION] train_time_max = {train_time_max}")
-        print(f"{'='*80}")
-        print(f"  Total cameras before filter : {total_before}")
-        print(f"  Cameras after filter         : {len(train_cams)}")
-        print(f"  Unique temporal frames (all) : {len(all_train_frame_indices)}")
-        print(f"  Kept frames ({len(kept_frame_indices)})  : {kept_frame_indices}")
-        print(f"  Excluded frames ({len(excluded_frame_indices)}): {excluded_frame_indices}")
-        if kept_times:
-            print(f"  Time range kept: [{min(kept_times):.4f}, {max(kept_times):.4f}]")
-        if len(excluded_frame_indices) == 0:
-            print(f"  [WARNING] No frames excluded! Check train_time_max={train_time_max} vs data time range.")
-        print(f"  Test/video cameras remain unfiltered for full-sequence rendering")
-        print(f"{'='*80}\n")
+            print(f"\n{'='*80}")
+            print(f"[FUTURE PREDICTION] train_time_max = {train_time_max}")
+            print(f"{'='*80}")
+            print(f"  Total camera-frame pairs     : {total_before}")
+            print(f"  Kept camera-frame pairs       : {len(future_valid_indices)}")
+            print(f"  Unique temporal frames (all)  : {len(all_frame_indices)}")
+            print(f"  Kept frames ({len(kept_frame_indices)})   : {kept_frame_indices}")
+            print(f"  Excluded frames ({len(excluded_frame_indices)}): {excluded_frame_indices}")
+            if kept_times:
+                print(f"  Time range kept: [{min(kept_times):.4f}, {max(kept_times):.4f}]")
+            if len(excluded_frame_indices) == 0:
+                print(f"  [WARNING] No frames excluded! Check train_time_max={train_time_max} vs data time range.")
+            print(f"  Test/video cameras remain unfiltered for full-sequence rendering")
+            print(f"{'='*80}\n")
+        else:
+            print(f"[FUTURE WARNING] Could not read image_times from dataset (base_ds={type(base_ds).__name__}). "
+                  f"Future prediction filter disabled — all frames will be used!")
+            is_future_prediction = False
 
     if not viewpoint_stack and not opt.dataloader:
-        # dnerf's branch
-        viewpoint_stack = [i for i in train_cams]
+        # dnerf's branch (non-dataloader path)
+        # For future prediction, filter by index to avoid loading all images
+        if is_future_prediction and future_valid_indices is not None:
+            viewpoint_stack = [train_cams[i] for i in future_valid_indices]
+        else:
+            viewpoint_stack = [i for i in train_cams]
         temp_list = copy.deepcopy(viewpoint_stack)
 
     batch_size = opt.batch_size
@@ -172,7 +184,7 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
     using_sparse_temporal_sampler = False
 
     if opt.dataloader:
-        viewpoint_stack = train_cams  # Use filtered training cameras
+        viewpoint_stack = train_cams  # Full dataset (filtering done via sampler)
         if opt.custom_sampler is not None:
             sampler = FineSampler(viewpoint_stack)
             viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size, sampler=sampler, num_workers=16, collate_fn=list)
@@ -190,7 +202,23 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
                     using_sparse_temporal_sampler = True
                 else:
                     print("[SPARSE WARNING] Could not infer camera/frame counts for sampler; falling back to dense sampling.") 
-            if sampler is not None:
+            
+            # Future prediction: restrict sampler to only include training-window indices
+            if is_future_prediction and future_valid_indices is not None:
+                if sampler is not None and using_sparse_temporal_sampler:
+                    # Intersect sparse indices with future-valid indices
+                    future_set = set(future_valid_indices)
+                    original_count = len(sampler.valid_indices)
+                    sampler.valid_indices = [i for i in sampler.valid_indices if i in future_set]
+                    sampler.num_samples = len(sampler.valid_indices)
+                    print(f"[FUTURE+SPARSE] Filtered sparse sampler: {original_count} → {sampler.num_samples} indices")
+                elif sampler is None:
+                    # Use SubsetRandomSampler for future prediction (no sparse)
+                    from torch.utils.data import SubsetRandomSampler
+                    sampler = SubsetRandomSampler(future_valid_indices)
+                    print(f"[FUTURE] Using SubsetRandomSampler with {len(future_valid_indices)} valid indices")
+
+            if sampler is not None and using_sparse_temporal_sampler:
                 print(f"[SPARSE] Using sparse temporal sampler with stride={stride} and offset={offset}")
                 # One-time dump: show ALL supervised temporal frame indices for verification
                 supervised_temporal = sorted(set(
@@ -199,11 +227,13 @@ def scene_reconstruction(dataset, opt, hyper, pipe, testing_iterations, saving_i
                 skipped_temporal = sorted(set(range(sampler.num_frames)) - set(supervised_temporal))
                 print(f"[SPARSE] Supervised temporal frames ({len(supervised_temporal)}/{sampler.num_frames}): {supervised_temporal}")
                 print(f"[SPARSE] Skipped temporal frames   ({len(skipped_temporal)}/{sampler.num_frames}): {skipped_temporal}")
+            
+            if sampler is not None:
                 viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size, sampler=sampler, num_workers=16, collate_fn=list)
                 random_loader = False
             else:
                 viewpoint_stack_loader = DataLoader(viewpoint_stack, batch_size=batch_size, shuffle=True, num_workers=16, collate_fn=list)
-            random_loader = True
+                random_loader = True
         loader = iter(viewpoint_stack_loader)
     
     # Skip coarse stage block (not needed for velocity field training)

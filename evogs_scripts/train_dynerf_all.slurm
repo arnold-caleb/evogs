@@ -38,7 +38,7 @@ python /n/fs/aa-rldiff/view_synthesis/gaussian-splatting/train.py \
     -s "$DATA_DIR" \
     --port 6019 \
     --expname "$exp_name/$scene_name" \
-    --configs /n/fs/aa-rldiff/view_synthesis/gaussian-splatting/arguments/dynerf/cut_roasted_beef_velocity.py \
+    --configs /n/fs/aa-rldiff/view_synthesis/gaussian-splatting/arguments/dynerf/cut_roasted_beef_future_velocity.py \
     --start_checkpoint "$STATIC_CKPT" \
     --iterations 14000 \
     --test_iterations 3000 7000 14000 \

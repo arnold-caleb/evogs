@@ -50,6 +50,35 @@ render.py
 scene/adaptive_coherence.py
 scene/grid_evolution.py
 
+# Experimental/old dynerf configs (keep only base_*.py + {scene}_velocity.py + {scene}_future_velocity.py)
+arguments/dynerf/base_sparse.py
+arguments/dynerf/default.py
+arguments/dynerf/README.md
+arguments/dynerf/*_xyz_only.py
+arguments/dynerf/*_displacement*.py
+arguments/dynerf/*_adaptive*.py
+arguments/dynerf/*_canonical*.py
+arguments/dynerf/*_coherence*.py
+arguments/dynerf/*_init_from_static*.py
+arguments/dynerf/*_optimized*.py
+arguments/dynerf/*_regularized*.py
+arguments/dynerf/*_rk4_*.py
+arguments/dynerf/*_strong_coh*.py
+arguments/dynerf/*_hq.py
+arguments/dynerf/*_original.py
+arguments/dynerf/*_no_hexplane.py
+arguments/dynerf/*_multi_anchor.py
+arguments/dynerf/*_4anchors.py
+arguments/dynerf/*_static_only.py
+arguments/dynerf/*_sparse.py
+arguments/dynerf/*_sparse_*.py
+arguments/dynerf/cut_roasted_beef.py
+arguments/dynerf/coffee_martini.py
+arguments/dynerf/cook_spinach.py
+arguments/dynerf/flame_salmon_1.py
+arguments/dynerf/flame_steak.py
+arguments/dynerf/sear_steak.py
+
 # User-specific configuration (keep .example template)
 scripts/config_paths.sh
 weight_visualization.ipynb

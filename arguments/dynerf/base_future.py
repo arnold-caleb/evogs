@@ -41,10 +41,14 @@ ModelHiddenParams = dict(
     no_dr = True,   # FREEZE rotation
     no_do = True,   # FREEZE opacity
     apply_rotation = False,
+    
+    # Dense supervision on the training window (no sparse skipping)
+    sparse_supervision = False,
 )
 
 OptimizationParams = dict(
     batch_size = 1,  # Small batch for stability
+    coarse_iterations = 0,  # Skip coarse stage (we load from static checkpoint)
     iterations = 14000,
     
     # Strong coherence to prevent drift
