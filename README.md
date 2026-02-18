@@ -126,13 +126,56 @@ mkdir -p data/dnerf
 # Extract to: data/dnerf/{scene_name}/
 ```
 
+D-NeRF datasets ship with pre-computed camera poses and images — no additional preprocessing is needed.
+
 ### DyNeRF (Real-world)
+
+The DyNeRF dataset ships as multi-view **video** files (`cam00.mp4`, `cam01.mp4`, ...) and an LLFF-format `poses_bounds.npy`. Unlike D-NeRF, it does **not** include a ground-truth point cloud. While you could initialize 3D Gaussians from a random point cloud, the original [4D Gaussian Splatting](https://github.com/hustvl/4DGaussians) paper showed that starting from a good COLMAP-derived point cloud leads to significantly faster convergence.
+
+#### Step 1: Download
 ```bash
-# Download from: https://github.com/USTC3DV/DyNeRF-Dataset
-# Scenes: cut_roasted_beef, coffee_martini, flame_salmon, cook_spinach, sear_steak, flame_steak
+# Download from: https://github.com/facebookresearch/Neural_3D_Video
+# Scenes: cut_roasted_beef, coffee_martini, flame_salmon_1, cook_spinach, sear_steak, flame_steak
 mkdir -p data/dynerf
 # Extract to: data/dynerf/{scene_name}/
+# You should see cam00.mp4, cam01.mp4, ..., poses_bounds.npy
 ```
+
+#### Step 2: Extract frames from videos
+Each camera's `.mp4` video is split into individual PNG frames:
+```bash
+python scripts/preprocess_dynerf_simple.py --datadir data/dynerf/cut_roasted_beef
+```
+This creates `data/dynerf/cut_roasted_beef/cam00/images/0000.png`, `0001.png`, ..., etc. for each camera.
+
+#### Step 3: Convert LLFF poses to COLMAP format
+The DyNeRF data uses LLFF-format camera poses (`poses_bounds.npy`). We convert these to COLMAP text format so that the COLMAP reconstruction pipeline can use the known camera parameters:
+```bash
+python scripts/llff2colmap.py data/dynerf/cut_roasted_beef
+```
+This creates:
+- `sparse_/` — COLMAP text files (`cameras.txt`, `images.txt`, `points3D.txt`) with the known intrinsics and extrinsics
+- `image_colmap/` — one reference frame per camera, renamed for COLMAP
+
+#### Step 4: Run COLMAP dense reconstruction
+With the known camera poses and reference frames, we run COLMAP's full pipeline (feature extraction → matching → sparse mapping → dense stereo → fusion) to produce a dense point cloud:
+```bash
+bash colmap_dynerf.sh data/dynerf/cut_roasted_beef
+```
+
+This runs:
+1. **Feature extraction** — SIFT features on the reference frames
+2. **Database update** — injects known camera intrinsics via `database.py`
+3. **Feature matching** — exhaustive matching across views
+4. **Sparse reconstruction** — COLMAP mapper (camera extrinsics are refined, intrinsics are fixed)
+5. **Dense reconstruction** — patch-match stereo + stereo fusion → `fused.ply`
+6. **Downsampling** — voxel downsample to ~40K points → `points3D_downsample2.ply`
+
+The final output `data/dynerf/cut_roasted_beef/points3D_downsample2.ply` is the initial point cloud used by Gaussian Splatting.
+
+> **SLURM users**: See `evogs_scripts/run_colmap_all_datasets.slurm` to process all DyNeRF scenes in one job.
+
+> **Note**: COLMAP must be installed and available on your `PATH`. Dense reconstruction requires a GPU with sufficient memory (an L40 or A100 works well).
 
 ### HyperNeRF (Deformable)
 ```bash
@@ -140,6 +183,8 @@ mkdir -p data/dynerf
 # Format: Nerfies dataset format
 mkdir -p data/hypernerf
 # Extract to: data/hypernerf/{scene_name}/
+# Then convert camera format:
+python scripts/hypernerf2colmap.py data/hypernerf/{scene_name}
 ```
 
 ---
@@ -168,12 +213,13 @@ python train.py \
 ```
 
 #### 2. Sparse Temporal Supervision
-Train on every 3rd frame and let the velocity field interpolate the rest:
+Sparse supervision is **enabled by default** in `base_velocity.py` (stride 3 — train on every 3rd frame). The velocity field learns to interpolate the skipped frames via ODE integration. No separate config is needed:
 ```bash
+# Same as standard velocity field — sparse supervision is built in
 python train.py \
   --source_path data/dynerf/cut_roasted_beef \
-  --model_path output/velocity_sparse/cut_roasted_beef \
-  --configs arguments/dynerf/cut_roasted_beef_sparse_stride3.py \
+  --model_path output/velocity/cut_roasted_beef \
+  --configs arguments/dynerf/cut_roasted_beef_velocity.py \
   --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
 ```
 
@@ -187,7 +233,7 @@ python train.py \
   --start_checkpoint output/static_4anchors/frame0/chkpnt30000.pth
 ```
 
-#### 4. Displacement Field (4DGaussians Baseline)
+#### 4. Displacement Field ([4DGaussians](https://github.com/hustvl/4DGaussians) Baseline)
 ```bash
 python train.py \
   --source_path data/dynerf/cut_roasted_beef \
@@ -361,10 +407,11 @@ arguments/
 │
 ├── dynerf/                  # DyNeRF dataset (real-world)
 │   ├── base.py             # Base config
-│   ├── base_velocity.py    # Velocity field defaults
+│   ├── base_velocity.py    # Velocity field defaults (sparse supervision built-in)
 │   ├── base_displacement.py # Displacement field defaults
-│   ├── base_sparse.py      # Sparse supervision defaults
 │   ├── base_future.py      # Future reconstruction defaults
+│   ├── {scene}_velocity.py  # Per-scene velocity field configs
+│   ├── {scene}_future_velocity.py  # Per-scene future prediction configs
 │   └── README.md           # Full documentation
 │
 └── hypernerf/               # HyperNeRF dataset
@@ -413,7 +460,15 @@ scene/                       # Gaussian Splatting scene
 
 train.py                     # Main training script (velocity field / displacement)
 train_anchor.py              # Train static Gaussian waypoints for anchor loss
-scripts/                     # Dataset-specific rendering & evaluation scripts
+colmap_dynerf.sh             # COLMAP dense reconstruction pipeline for DyNeRF
+database.py                  # Inject known camera intrinsics into COLMAP database
+scripts/                     # Preprocessing, rendering & evaluation scripts
+├── preprocess_dynerf_simple.py  # Extract frames from DyNeRF videos
+├── llff2colmap.py               # Convert LLFF poses → COLMAP format
+├── downsample_point.py          # Voxel-downsample a point cloud to ~40K pts
+├── render_velocity_field_temporal.py  # Render DyNeRF velocity field results
+├── render_dnerf_temporal.py     # Render D-NeRF results
+└── evaluate_model.sh            # Compute PSNR / SSIM / LPIPS
 evogs_scripts/               # SLURM job scripts for cluster training
 gaussian_renderer/           # Differentiable rasterization
 utils/                       # General utilities
@@ -474,12 +529,11 @@ We provide configs for all ablations in the paper:
 
 | Experiment | Config | Description |
 |------------|--------|-------------|
-| Sparse supervision (stride 3) | `arguments/dynerf/cut_roasted_beef_sparse_stride3.py` | Train on every 3rd frame |
-| Future reconstruction | `arguments/dynerf/cut_roasted_beef_future_velocity.py` | Train on first 50%, predict rest |
-| Multi-anchor | `arguments/dynerf/cut_roasted_beef_multi_anchor.py` | Reduce integration drift with waypoints |
-| RK4 integration | `arguments/dynerf/cut_roasted_beef_velocity_rk4_a100.py` | 4th-order Runge-Kutta |
-| XYZ-only | `arguments/dynerf/cut_roasted_beef_velocity_xyz_only.py` | Position velocity only (no rotation/scale) |
-| Displacement baseline | `arguments/dynerf/cut_roasted_beef_sparse_displacement.py` | 4DGS deformation baseline |
+| Velocity field (EvoGS) | `arguments/dynerf/cut_roasted_beef_velocity.py` | Sparse supervision + multi-anchor waypoints |
+| Future reconstruction | `arguments/dynerf/cut_roasted_beef_future_velocity.py` | Train on first 50%, predict the rest |
+| Displacement baseline | `arguments/dynerf/cut_roasted_beef_displacement.py` | 4DGS deformation baseline |
+
+Per-scene configs follow the same naming pattern for all DyNeRF scenes (e.g., `coffee_martini_velocity.py`, `flame_steak_future_velocity.py`).
 
 See configuration READMEs (`arguments/dynerf/README.md`) for the full list.
 
