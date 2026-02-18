@@ -8,7 +8,8 @@ tensorboard_3d
 screenshots
 
 # Documentation and test files
-docs/
+docs/*
+!docs/index.html
 INTRINSIC_DYNAMICS_TRAINING_SEQUENCE.md
 CORAL_TWO_STAGE_EXPLAINED.md
 INTRINSIC_DYNAMICS_CONCEPTUAL_CORE.md
