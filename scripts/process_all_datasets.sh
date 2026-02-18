@@ -1,11 +1,11 @@
 #!/bin/bash
 # Process all DyNeRF datasets: preprocess, extract images, run COLMAP, downsample
+# Usage: bash scripts/process_all_datasets.sh [data_dir]
+#   data_dir: path to DyNeRF data root (default: data/dynerf)
 
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$(dirname "$0")/.."
 
-# Source conda environment
-source /u/aa0008/miniconda/etc/profile.d/conda.sh
-conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
+DATA_DIR="${1:-data/dynerf}"
 
 datasets=("coffee_martini" "cook_spinach" "sear_steak" "flame_salmon_1" "flame_steak")
 
@@ -15,34 +15,30 @@ for dataset in "${datasets[@]}"; do
     echo "Processing: $dataset"
     echo "========================================"
     
-    dataset_path="/n/fs/visualai-scr/Data/dynerf/$dataset"
+    dataset_path="${DATA_DIR}/$dataset"
     
     # Step 1: Check if images need extraction
     if [ ! -d "$dataset_path/cam00/images" ]; then
         echo "Extracting images for $dataset..."
-        python scripts/convert_videos_to_images.py --datasets $dataset --data_dir /n/fs/visualai-scr/Data/dynerf
+        python scripts/preprocess_dynerf_simple.py --datadir "$dataset_path"
     else
         echo "Images already extracted for $dataset"
     fi
     
-    # Step 2: Create symlink if not exists
-    if [ ! -L "data/dynerf/$dataset" ]; then
-        echo "Creating symlink for $dataset..."
-        ln -s /n/fs/visualai-scr/Data/dynerf/$dataset data/dynerf/$dataset
+    # Step 2: Convert LLFF poses to COLMAP format
+    if [ ! -d "$dataset_path/sparse_" ]; then
+        echo "Converting poses for $dataset..."
+        python scripts/llff2colmap.py "$dataset_path"
     else
-        echo "Symlink already exists for $dataset"
+        echo "COLMAP format already exists for $dataset"
     fi
     
-    # Step 3: Run preprocessing
-    echo "Running preprocessing for $dataset..."
-    python scripts/preprocess_dynerf.py --datadir data/dynerf/$dataset
-    
     echo "✅ Finished preprocessing $dataset"
-    echo "NOTE: Run COLMAP separately using: sbatch slurm_scripts/run_colmap_reconstruction.slurm (modify WORKDIR)"
+    echo "NOTE: Run COLMAP separately: bash colmap_dynerf.sh $dataset_path"
 done
 
 echo ""
 echo "========================================"
-echo "All datasets processed!"
+echo "All datasets preprocessed!"
+echo "Next step: Run COLMAP with colmap_dynerf.sh or sbatch evogs_scripts/run_colmap_all_datasets.slurm"
 echo "========================================"
-

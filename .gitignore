@@ -80,8 +80,9 @@ arguments/dynerf/flame_salmon_1.py
 arguments/dynerf/flame_steak.py
 arguments/dynerf/sear_steak.py
 
-# User-specific configuration (keep .example template)
+# User-specific configuration (keep .example templates only)
 scripts/config_paths.sh
+evogs_scripts/config_paths.sh
 weight_visualization.ipynb
 train_with_dynamics.py 
 train_with_frame0.py 

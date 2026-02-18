@@ -1,25 +1,37 @@
 #!/bin/bash
-# Configuration file for EvoGS training paths
-# Copy this file to config_paths.sh and edit with your paths:
-#   cp scripts/config_paths.sh.example scripts/config_paths.sh
+# ============================================================================
+# EvoGS Configuration — EDIT THIS FILE FOR YOUR SYSTEM
+# ============================================================================
+# Copy this file to config_paths.sh and fill in your paths:
+#   cp evogs_scripts/config_paths.sh.example evogs_scripts/config_paths.sh
+#
+# All SLURM scripts in evogs_scripts/ will source this file automatically.
+# ============================================================================
 
-# === DATASET CONFIGURATION ===
-# Root directory containing your datasets
-export DATA_ROOT="/path/to/your/datasets"
+# === ENVIRONMENT ===
+# Path to your conda installation's init script
+export CONDA_INIT="$HOME/miniconda/etc/profile.d/conda.sh"
+# Path to the conda environment with EvoGS dependencies
+export CONDA_ENV="/path/to/your/conda/envs/evogs"
 
-# Specific dataset paths (override DATA_ROOT if needed)
-export DNERF_DATA="${DATA_ROOT}/dnerf"
-export DYNERF_DATA="${DATA_ROOT}/dynerf"
-export HYPERNERF_DATA="${DATA_ROOT}/hypernerf"
+# === PROJECT ===
+# Root of the EvoGS repository (this directory)
+export EVOGS_ROOT="/path/to/evogs"
 
-# === OUTPUT CONFIGURATION ===
-# Directory where training outputs will be saved
-export OUTPUT_ROOT="./output"
+# === DATASETS ===
+export DNERF_DATA="$EVOGS_ROOT/data/dnerf"
+export DYNERF_DATA="$EVOGS_ROOT/data/dynerf"
+export HYPERNERF_DATA="$EVOGS_ROOT/data/hypernerf"
 
-# === CONDA ENVIRONMENT ===
-# Path to your conda environment (leave empty to skip)
-export CONDA_ENV_PATH=""
+# === SLURM (optional — adjust for your cluster) ===
+export SLURM_ACCOUNT="your_account"
+export SLURM_PARTITION="your_partition"
+export SLURM_EMAIL="you@example.com"
+# GPU type (e.g., l40, a100, v100)
+export SLURM_GPU_TYPE="l40"
 
-# === GPU CONFIGURATION ===
-export NUM_GPUS=1
-
+# === TEMP DIRECTORIES (optional — useful on shared clusters) ===
+# export TMPDIR="/scratch/$USER/tmp"
+# export CONDA_PKGS_DIRS="/scratch/$USER/.conda_pkgs"
+# export XDG_CACHE_HOME="/scratch/$USER/.cache"
+# export PIP_CACHE_DIR="/scratch/$USER/.pip_cache"

@@ -37,7 +37,7 @@ def convert_npy_to_ply(npy_path, ply_path):
 
 if __name__ == "__main__":
     # Convert all HyperNeRF datasets
-    hypernerf_dir = "/n/fs/visualai-scr/Data/hypernerf"
+    hypernerf_dir = "data/hypernerf"  # Update with your HyperNeRF data path
     scenes = sorted([d for d in os.listdir(hypernerf_dir) if os.path.isdir(os.path.join(hypernerf_dir, d))])
     
     print(f"Converting points.npy → points3D_downsample2.ply for {len(scenes)} HyperNeRF datasets...")

@@ -6,7 +6,7 @@ echo "TRAINED MODELS SUMMARY"
 echo "======================================"
 echo ""
 
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$(dirname "$0")/.."
 
 # Find all output directories with checkpoints
 for exp_dir in output/*/cut_roasted_beef*; do

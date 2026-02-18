@@ -7,9 +7,15 @@
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
 #SBATCH --time=3:00:00
-#SBATCH --account=visualai
-#SBATCH --partition=visualai
-#SBATCH --gres=gpu:l40:1
+#SBATCH --gres=gpu:1
+
+# === Load user config ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/config_paths.sh" 2>/dev/null || {
+    echo "ERROR: evogs_scripts/config_paths.sh not found."
+    echo "  cp evogs_scripts/config_paths.sh.example evogs_scripts/config_paths.sh"
+    exit 1
+}
 
 echo "=== COLMAP DENSE RECONSTRUCTION FOR DYNERF DATASETS ==="
 hostname
@@ -17,18 +23,18 @@ nvidia-smi
 
 echo ""
 echo "=== ACTIVATING ENVIRONMENT ==="
-source /u/aa0008/miniconda/etc/profile.d/conda.sh
-conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
+source "$CONDA_INIT"
+conda activate "$CONDA_ENV"
 
 which colmap
 colmap --version
 
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$EVOGS_ROOT"
 
 datasets=("coffee_martini" "cook_spinach" "sear_steak" "flame_salmon_1" "flame_steak")
 
 for dataset in "${datasets[@]}"; do
-    WORKDIR="data/dynerf/$dataset"
+    WORKDIR="${DYNERF_DATA}/$dataset"
     
     echo ""
     echo "=== Processing: $dataset ==="
@@ -62,7 +68,7 @@ done
 echo ""
 echo "=== SUMMARY ==="
 for dataset in "${datasets[@]}"; do
-    WORKDIR="data/dynerf/$dataset"
+    WORKDIR="${DYNERF_DATA}/$dataset"
     if [ -f "$WORKDIR/points3D_downsample2.ply" ]; then
         echo "✅ $dataset"
     else

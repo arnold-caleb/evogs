@@ -59,7 +59,7 @@ def create_training_video(image_dir, output_path, fps=10):
 def main():
     parser = argparse.ArgumentParser(description="Create training progression videos")
     parser.add_argument("--output_dir", type=str, 
-                       default="/n/fs/aa-rldiff/view_synthesis/gaussian-splatting/output/sde_baseline/cut_roasted_beef",
+                       default="output/sde_baseline/cut_roasted_beef",
                        help="Output directory containing training results")
     parser.add_argument("--fps", type=int, default=10, help="Frames per second")
     

@@ -11,9 +11,10 @@ ModelHiddenParams = dict(
     # Train on t ∈ [0, 0.5] → frames 0-150
     # Test on t ∈ [0.5, 1.0] → frames 150-300
     anchor_checkpoints = {
-        0.00: "output/static_4anchors/frame0_20251104_103403/chkpnt30000.pth",
-        0.25: "output/static_4anchors/frame75_20251104_103403/chkpnt30000.pth",
-        0.50: "output/static_4anchors/frame150_20251104_103403/chkpnt30000.pth",
+        # NOTE: Update paths after running train_anchor.py for this scene
+        0.00: "output/static_4anchors/cut_roasted_beef_frame0/chkpnt30000.pth",
+        0.25: "output/static_4anchors/cut_roasted_beef_frame75/chkpnt30000.pth",
+        0.50: "output/static_4anchors/cut_roasted_beef_frame150/chkpnt30000.pth",
         # NOT using t=0.75 (frame 225) - that's in the future!
     },
 )

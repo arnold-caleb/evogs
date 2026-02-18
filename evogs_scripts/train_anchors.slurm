@@ -7,33 +7,34 @@
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=32G
 #SBATCH --time=06:00:00
-#SBATCH --account=visualai
-#SBATCH --partition=visualai
-#SBATCH --gres=gpu:l40:1
+#SBATCH --gres=gpu:1
 
+# === Load user config ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/config_paths.sh" 2>/dev/null || {
+    echo "ERROR: evogs_scripts/config_paths.sh not found."
+    echo "  cp evogs_scripts/config_paths.sh.example evogs_scripts/config_paths.sh"
+    exit 1
+}
 
 echo "=== TRAINING 4-ANCHOR STATIC GAUSSIANS (FRAMES 0, 75, 150, 225) ==="
-echo "=== SYSTEM INFORMATION ==="
 hostname
 nvidia-smi
 
 echo ""
 echo "=== ACTIVATING ENVIRONMENT ==="
-source /u/aa0008/miniconda/etc/profile.d/conda.sh
-conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
-echo "Environment activated"
+source "$CONDA_INIT"
+conda activate "$CONDA_ENV"
 
-# Set memory config
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-
-# Go to project directory
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$EVOGS_ROOT"
 
 # ============================================
-# CONFIGURATION
+# CONFIGURATION — edit for your scene
 # ============================================
-DATA_DIR="/n/fs/aa-rldiff/view_synthesis/gaussian-splatting/data/dynerf/cut_roasted_beef"
-CONFIG="arguments/static/cut_roasted_beef_frame0_hq.py"  # Using HQ config
+SCENE="cut_roasted_beef"
+DATA_DIR="${DYNERF_DATA}/${SCENE}"
+CONFIG="arguments/static/${SCENE}_frame0_hq.py"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BASE_OUTPUT_DIR="output/static_4anchors"
 
@@ -48,7 +49,6 @@ echo "  • Frame 75  (t=0.25)"
 echo "  • Frame 150 (t=0.50)"
 echo "  • Frame 225 (t=0.75)"
 echo "Each model: 30K iterations"
-echo "Forward-only integration strategy"
 echo ""
 
 # ============================================
@@ -67,17 +67,7 @@ python train_anchor.py \
     --iterations 30000 \
     --checkpoint_iterations 30000
 
-echo ""
 echo "✓ Frame 0 training complete: $OUTPUT_DIR_F0"
-echo ""
-echo "=== RENDERING FRAME 0 ==="
-python render_static_frame0.py \
-    --source_path "$DATA_DIR" \
-    --model_path "$OUTPUT_DIR_F0" \
-    --iteration 30000 \
-    --configs "$CONFIG" \
-    --quiet
-echo "✓ Frame 0 renders saved at: $OUTPUT_DIR_F0/renders_iter30000/"
 echo ""
 
 # ============================================
@@ -88,12 +78,11 @@ OUTPUT_DIR_F75="${BASE_OUTPUT_DIR}/frame75_${TIMESTAMP}"
 CANONICAL_CHECKPOINT="${OUTPUT_DIR_F0}/chkpnt30000.pth"
 
 echo "Loading canonical Gaussians from: $CANONICAL_CHECKPOINT"
-echo "This ensures same Gaussian count and correspondence!"
 
 python train_anchor.py \
     --source_path "$DATA_DIR" \
     --model_path "$OUTPUT_DIR_F75" \
-    --configs "arguments/static/cut_roasted_beef_anchor.py" \
+    --configs "arguments/static/${SCENE}_anchor.py" \
     --dataset_type "dynerf_static" \
     --frame_idx 75 \
     --canonical_checkpoint "$CANONICAL_CHECKPOINT" \
@@ -101,33 +90,19 @@ python train_anchor.py \
     --iterations 30000 \
     --checkpoint_iterations 30000
 
-echo ""
 echo "✓ Frame 75 training complete: $OUTPUT_DIR_F75"
-echo ""
-echo "=== RENDERING FRAME 75 ==="
-python render_static_frame0.py \
-    --source_path "$DATA_DIR" \
-    --model_path "$OUTPUT_DIR_F75" \
-    --iteration 30000 \
-    --configs "$CONFIG" \
-    --quiet
-echo "✓ Frame 75 renders saved at: $OUTPUT_DIR_F75/renders_iter30000/"
 echo ""
 
 # ============================================
-# TRAINING FRAME 150 (t=0.5, MIDDLE) - FROM CANONICAL
+# TRAINING FRAME 150 (t=0.5) - FROM CANONICAL
 # ============================================
 echo "=== [3/4] TRAINING ANCHOR FRAME 150 (t=0.5) FROM CANONICAL ==="
 OUTPUT_DIR_F150="${BASE_OUTPUT_DIR}/frame150_${TIMESTAMP}"
-CANONICAL_CHECKPOINT="${OUTPUT_DIR_F0}/chkpnt30000.pth"
-
-echo "Loading canonical Gaussians from: $CANONICAL_CHECKPOINT"
-echo "This ensures same Gaussian count and correspondence!"
 
 python train_anchor.py \
     --source_path "$DATA_DIR" \
     --model_path "$OUTPUT_DIR_F150" \
-    --configs "arguments/static/cut_roasted_beef_anchor.py" \
+    --configs "arguments/static/${SCENE}_anchor.py" \
     --dataset_type "dynerf_static" \
     --frame_idx 150 \
     --canonical_checkpoint "$CANONICAL_CHECKPOINT" \
@@ -135,17 +110,7 @@ python train_anchor.py \
     --iterations 30000 \
     --checkpoint_iterations 30000
 
-echo ""
 echo "✓ Frame 150 training complete: $OUTPUT_DIR_F150"
-echo ""
-echo "=== RENDERING FRAME 150 ==="
-python render_static_frame0.py \
-    --source_path "$DATA_DIR" \
-    --model_path "$OUTPUT_DIR_F150" \
-    --iteration 30000 \
-    --configs "$CONFIG" \
-    --quiet
-echo "✓ Frame 150 renders saved at: $OUTPUT_DIR_F150/renders_iter30000/"
 echo ""
 
 # ============================================
@@ -154,13 +119,10 @@ echo ""
 echo "=== [4/4] TRAINING ANCHOR FRAME 225 (t=0.75) FROM CANONICAL ==="
 OUTPUT_DIR_F225="${BASE_OUTPUT_DIR}/frame225_${TIMESTAMP}"
 
-echo "Loading canonical Gaussians from: $CANONICAL_CHECKPOINT"
-echo "This ensures same Gaussian count and correspondence!"
-
 python train_anchor.py \
     --source_path "$DATA_DIR" \
     --model_path "$OUTPUT_DIR_F225" \
-    --configs "arguments/static/cut_roasted_beef_anchor.py" \
+    --configs "arguments/static/${SCENE}_anchor.py" \
     --dataset_type "dynerf_static" \
     --frame_idx 225 \
     --canonical_checkpoint "$CANONICAL_CHECKPOINT" \
@@ -168,23 +130,13 @@ python train_anchor.py \
     --iterations 30000 \
     --checkpoint_iterations 30000
 
-echo ""
 echo "✓ Frame 225 training complete: $OUTPUT_DIR_F225"
-echo ""
-echo "=== RENDERING FRAME 225 ==="
-python render_static_frame0.py \
-    --source_path "$DATA_DIR" \
-    --model_path "$OUTPUT_DIR_F225" \
-    --iteration 30000 \
-    --configs "$CONFIG" \
-    --quiet
-echo "✓ Frame 225 renders saved at: $OUTPUT_DIR_F225/renders_iter30000/"
 echo ""
 
 # ============================================
 # SUMMARY
 # ============================================
-echo "=== ALL 4 ANCHOR TRAINING & RENDERING COMPLETE ==="
+echo "=== ALL 4 ANCHOR TRAINING COMPLETE ==="
 echo ""
 echo "Anchor checkpoints (WITH GAUSSIAN CORRESPONDENCE):"
 echo "  Frame 0   (t=0.00): $OUTPUT_DIR_F0/chkpnt30000.pth"
@@ -192,25 +144,5 @@ echo "  Frame 75  (t=0.25): $OUTPUT_DIR_F75/chkpnt30000.pth"
 echo "  Frame 150 (t=0.50): $OUTPUT_DIR_F150/chkpnt30000.pth"
 echo "  Frame 225 (t=0.75): $OUTPUT_DIR_F225/chkpnt30000.pth"
 echo ""
-echo "Renders:"
-echo "  Frame 0:   $OUTPUT_DIR_F0/renders_iter30000/"
-echo "  Frame 75:  $OUTPUT_DIR_F75/renders_iter30000/"
-echo "  Frame 150: $OUTPUT_DIR_F150/renders_iter30000/"
-echo "  Frame 225: $OUTPUT_DIR_F225/renders_iter30000/"
-echo ""
-echo "✓ Gaussian correspondence: All anchors have SAME Gaussian count"
-echo "✓ Gaussian #i at any frame refers to the same physical point"
-echo ""
-echo "Next step: Train velocity field with FORWARD-ONLY integration"
-echo "  Integration strategy:"
-echo "    t ∈ [0.00, 0.25) → integrate forward from t=0"
-echo "    t ∈ [0.25, 0.50) → integrate forward from t=0.25"
-echo "    t ∈ [0.50, 0.75) → integrate forward from t=0.5"
-echo "    t ∈ [0.75, 1.00] → integrate forward from t=0.75"
-echo "  Benefits:"
-echo "    • No backward integration confusion"
-echo "    • Maximum integration path = 0.25 time units"
-echo "    • Cleaner transitions at anchor boundaries"
-echo ""
+echo "Next: Update anchor_checkpoints in your scene config, then train the velocity field."
 echo "=== ALL DONE ==="
-

@@ -7,9 +7,15 @@
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=48:00:00
-#SBATCH --account=visualai
-#SBATCH --partition=visualai
-#SBATCH --gres=gpu:l40:1
+#SBATCH --gres=gpu:1
+
+# === Load user config ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/config_paths.sh" 2>/dev/null || {
+    echo "ERROR: evogs_scripts/config_paths.sh not found."
+    echo "  cp evogs_scripts/config_paths.sh.example evogs_scripts/config_paths.sh"
+    exit 1
+}
 
 echo "=== TRAINING HYPERNERF SCENES ==="
 hostname
@@ -17,11 +23,11 @@ nvidia-smi
 
 echo ""
 echo "=== ACTIVATING ENVIRONMENT ==="
-source /u/aa0008/miniconda/etc/profile.d/conda.sh
-conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
+source "$CONDA_INIT"
+conda activate "$CONDA_ENV"
 
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$EVOGS_ROOT"
 
 SCENES=(
     "americano"
@@ -35,10 +41,10 @@ for scene in "${SCENES[@]}"; do
     echo "=== Training: $scene ==="
     
     TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-    OUTPUT_DIR="output/hypernerf/${scene}_${TIMESTAMP}_0.75"
+    OUTPUT_DIR="output/hypernerf/${scene}_${TIMESTAMP}"
     
     python train.py \
-        --source_path "data/nerfies/${scene}" \
+        --source_path "${HYPERNERF_DATA}/${scene}" \
         --model_path "$OUTPUT_DIR" \
         --configs "arguments/hypernerf/${scene}.py" \
         --expname "hypernerf_${scene}" \

@@ -61,7 +61,7 @@ def estimate_from_iterations(iterations, iterations_per_second=25):
 
 def analyze_dnerf_training():
     """Analyze D-NeRF training compute."""
-    base_dir = Path("/n/fs/aa-rldiff/view_synthesis/gaussian-splatting")
+    base_dir = Path(__file__).resolve().parent.parent
     slurm_logs = base_dir / "slurm_outputs"
     output_dir = base_dir / "output" / "dnerf"
     

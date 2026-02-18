@@ -1,15 +1,21 @@
 #!/bin/bash
 #SBATCH --job-name=render_velocity
-#SBATCH --output=/n/fs/aa-rldiff/view_synthesis/gaussian-splatting/slurm_outputs/render_velocity_%j.out
-#SBATCH --error=/n/fs/aa-rldiff/view_synthesis/gaussian-splatting/slurm_outputs/render_velocity_%j.err
+#SBATCH --output=slurm_outputs/render_velocity_%j.out
+#SBATCH --error=slurm_outputs/render_velocity_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=01:00:00
-#SBATCH --account=visualai
-#SBATCH --partition=visualai
-#SBATCH --gres=gpu:l40:1
+#SBATCH --gres=gpu:1
+
+# === Load user config ===
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/config_paths.sh" 2>/dev/null || {
+    echo "ERROR: evogs_scripts/config_paths.sh not found."
+    echo "  cp evogs_scripts/config_paths.sh.example evogs_scripts/config_paths.sh"
+    exit 1
+}
 
 echo "=== RENDERING VELOCITY FIELD TEMPORAL VIDEO ==="
 hostname
@@ -17,14 +23,18 @@ nvidia-smi
 
 echo ""
 echo "=== ACTIVATING ENVIRONMENT ==="
-source /u/aa0008/miniconda/etc/profile.d/conda.sh
-conda activate /n/fs/aa-rldiff/.conda_envs/gaussian_splatting_cuda12
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+source "$CONDA_INIT"
+conda activate "$CONDA_ENV"
+cd "$EVOGS_ROOT"
 
-MODEL_PATH="output/velocity_field_optimized_long/flame_steak_20251024_221036"
-ITERATION=20000
-CONFIG="arguments/dynerf/flame_steak_velocity_xyz_only.py"
-SOURCE_PATH="/n/fs/aa-rldiff/view_synthesis/gaussian-splatting/data/dynerf/flame_steak"
+# ============================================
+# CONFIGURATION — edit for your model
+# ============================================
+SCENE="cut_roasted_beef"
+MODEL_PATH="output/velocity_field/${SCENE}"
+ITERATION=14000
+CONFIG="arguments/dynerf/${SCENE}_velocity.py"
+SOURCE_PATH="${DYNERF_DATA}/${SCENE}"
 
 echo ""
 echo "Model: $MODEL_PATH"
@@ -41,4 +51,4 @@ python scripts/render_velocity_field_temporal.py \
 
 echo ""
 echo "=== COMPLETE ==="
-echo "Output: $MODEL_PATH/videos/velocity_field_temporal_300frames_5interp.mp4"
+echo "Output: $MODEL_PATH/videos/"

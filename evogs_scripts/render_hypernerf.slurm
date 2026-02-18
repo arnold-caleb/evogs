@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=render_dnerf
-#SBATCH --output=slurm_outputs/render_dnerf_%j.out
-#SBATCH --error=slurm_outputs/render_dnerf_%j.err
+#SBATCH --job-name=render_hypernerf
+#SBATCH --output=slurm_outputs/render_hypernerf_%j.out
+#SBATCH --error=slurm_outputs/render_hypernerf_%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
-#SBATCH --time=00:30:00
+#SBATCH --time=01:00:00
 #SBATCH --gres=gpu:1
 
 # === Load user config ===
@@ -17,7 +17,7 @@ source "${SCRIPT_DIR}/config_paths.sh" 2>/dev/null || {
     exit 1
 }
 
-echo "=== RENDERING D-NERF TEMPORAL VIDEO ==="
+echo "=== RENDERING HYPERNERF TEMPORAL VIDEO ==="
 hostname
 nvidia-smi
 
@@ -30,20 +30,20 @@ cd "$EVOGS_ROOT"
 # ============================================
 # CONFIGURATION — edit for your model
 # ============================================
-SCENE="mutant"
-MODEL_DIR="output/dnerf/${SCENE}"
+SCENE="americano"
+MODEL_DIR="output/hypernerf/${SCENE}"
 
 echo ""
 echo "Model: $MODEL_DIR"
-echo "Rendering 100 temporal frames from camera 10"
+echo "Rendering 150 temporal frames from camera 8"
 
-python scripts/render_dnerf_temporal.py \
+python scripts/render_hypernerf_temporal.py \
     --model_path "$MODEL_DIR" \
-    --source_path "${DNERF_DATA}/${SCENE}" \
-    --configs "arguments/dnerf/${SCENE}.py" \
-    --iteration 20000 \
-    --num_frames 100 \
-    --camera_index 10
+    --source_path "${HYPERNERF_DATA}/${SCENE}" \
+    --configs "arguments/hypernerf/${SCENE}.py" \
+    --iteration 14000 \
+    --num_frames 150 \
+    --camera_index 8
 
 echo ""
 echo "=== COMPLETE ==="

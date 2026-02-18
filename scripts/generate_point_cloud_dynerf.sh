@@ -15,7 +15,7 @@ echo "========================================"
 echo "Dataset: $DATASET"
 echo ""
 
-cd /n/fs/aa-rldiff/view_synthesis/gaussian-splatting
+cd "$(dirname "$0")/.."
 
 # Check if COLMAP images exist
 if [ ! -d "$DATASET/image_colmap" ]; then
